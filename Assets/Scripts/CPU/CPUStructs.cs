@@ -1,4 +1,4 @@
-﻿namespace TorchDragon
+﻿namespace TorchDragon.CPU
 {
     using System.Collections;
     using System.Collections.Generic;
@@ -22,6 +22,18 @@
         }
     }
 
+    public struct TDSphere
+    {
+        float3 position;
+        float radius;
+
+        public TDSphere(float3 position, float radius)
+        {
+            this.position = position;
+            this.radius = radius;
+        }
+    }
+
     public struct TDCamera
     {
         float3 forward;
@@ -42,6 +54,18 @@
             this.pixelResolution.y = camera.pixelHeight;
             this.aspectRatio = camera.aspect;
             this.verticalFOV = camera.fieldOfView;
+        }
+    }
+
+    public struct TDScene
+    {
+        TDCamera camera;
+        TDSphere[] spheres;
+
+        public TDScene(TDCamera camera, List<TDSphere> spheres)
+        {
+            this.camera = camera;
+            this.spheres = spheres.ToArray();
         }
     }
 }
