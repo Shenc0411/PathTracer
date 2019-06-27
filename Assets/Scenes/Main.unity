@@ -246,6 +246,7 @@ MonoBehaviour:
   material: 1
   color: {r: 0.657, g: 0.9966414, b: 1, a: 1}
   fuzz: 0.3
+  refractiveIndex: 1.5
 --- !u!135 &725768478
 SphereCollider:
   m_ObjectHideFlags: 0
@@ -445,6 +446,7 @@ MonoBehaviour:
   material: 0
   color: {r: 0.5754717, g: 0.56004405, b: 0.19738683, a: 1}
   fuzz: 0.5
+  refractiveIndex: 1.5
 --- !u!135 &1627331117
 SphereCollider:
   m_ObjectHideFlags: 0
@@ -596,9 +598,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2991fae30fe323846b4a99209612ada5, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  material: 1
+  material: 2
   color: {r: 1, g: 1, b: 0.503, a: 1}
   fuzz: 1
+  refractiveIndex: 1.5
 --- !u!135 &1866092986
 SphereCollider:
   m_ObjectHideFlags: 0
@@ -665,7 +668,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1866092984}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0.813, y: 0, z: 0.68}
+  m_LocalPosition: {x: 0.74, y: 0, z: 0.68}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_Children: []
   m_Father: {fileID: 0}
@@ -747,8 +750,8 @@ Transform:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1875219420}
-  m_LocalRotation: {x: -0.045930933, y: -0.9154557, z: 0.10893343, w: -0.38466185}
-  m_LocalPosition: {x: -2.234459, y: 0.616827, z: 1.8911667}
+  m_LocalRotation: {x: 0.07249176, y: 0.91080976, z: -0.18160793, w: 0.36357832}
+  m_LocalPosition: {x: -3.539577, y: 1.2939868, z: 2.4656744}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_Children: []
   m_Father: {fileID: 0}
@@ -861,3 +864,4 @@ MonoBehaviour:
   material: 0
   color: {r: 1, g: 0.615, b: 0.615, a: 1}
   fuzz: 0.5
+  refractiveIndex: 1.5

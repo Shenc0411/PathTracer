@@ -92,6 +92,7 @@
             {
                 float3 attenuation = float3.zero;
                 float3 scatteredRayDirection = float3.zero;
+                bool scatter = false;
 
                 if(hitRecord.material == 1.0f)
                 {
@@ -99,6 +100,7 @@
                     float3 target = hitRecord.point + hitRecord.normal + this.RandomPointInUnitSphere();
                     scatteredRayDirection = target - hitRecord.point;
                     attenuation = hitRecord.albedo;
+                    scatter = true;
                 }
                 else if(hitRecord.material == 2.0f)
                 {
@@ -106,11 +108,71 @@
                     scatteredRayDirection = ray.direction - 2.0f * math.dot(ray.direction, hitRecord.normal) * hitRecord.normal
                                         + hitRecord.fuzz * this.RandomPointInUnitSphere() * hitRecord.fuzz;
                     attenuation = hitRecord.albedo;
+
+                    if (math.dot(scatteredRayDirection, hitRecord.normal) > 0.0f)
+                    {
+                        scatter = true;
+                    }
+
+                }
+                else if(hitRecord.material == 3.0f)
+                {
+                    //Refractive
+                    float3 reflectedDirection = ray.direction - 2.0f * math.dot(ray.direction, hitRecord.normal) * hitRecord.normal;
+                    float3 outwardNormal = float3.zero;
+                    float3 refractedDirection = float3.zero;
+                    float reflectProbablity = 1.0f;
+                    float cosine = 0.0f;
+                    float niOverNt = 0.0f;
+                    attenuation = new float3(1.0f, 1.0f, 1.0f);
+
+                    if(math.dot(ray.direction, hitRecord.normal) > 0.0f)
+                    {
+                        outwardNormal = -hitRecord.normal;
+                        niOverNt = hitRecord.refractiveIndex;
+                        cosine = hitRecord.refractiveIndex * math.dot(ray.direction, hitRecord.normal) / math.length(ray.direction);
+                    }
+                    else
+                    {
+                        outwardNormal = hitRecord.normal;
+                        niOverNt = 1.0f / hitRecord.refractiveIndex;
+                        cosine = -math.dot(ray.direction, hitRecord.normal) / math.length(ray.direction);
+                    }
+
+                    float dt = math.dot(ray.direction, hitRecord.normal);
+                    float discriminant = 1.0f - niOverNt * niOverNt * (1.0f - dt * dt);
+                    
+
+                    if(discriminant > 0.0f)
+                    {
+                        //Refract
+                        refractedDirection = niOverNt * (ray.direction - outwardNormal * dt) - outwardNormal * math.sqrt(discriminant);
+                        //Schlick Approximation
+                        float r0 = (1.0f - hitRecord.refractiveIndex) / (1.0f + hitRecord.refractiveIndex);
+                        r0 = r0 * r0;
+                        reflectProbablity = r0 + (1 - r0) * math.pow((1.0f - cosine), 5.0f);
+                    }
+
+                    if(UnityEngine.Random.Range(0.0f, upperBoundOne) < reflectProbablity)
+                    {
+                        scatteredRayDirection = reflectedDirection;
+                    }
+                    else
+                    {
+                        scatteredRayDirection = refractedDirection;
+                    }
+
+                    scatter = true;
                 }
 
-                TDRay scatteredRay = new TDRay(hitRecord.point, scatteredRayDirection);
+                if (scatter)
+                {
+                    TDRay scatteredRay = new TDRay(hitRecord.point, scatteredRayDirection);
 
-                return attenuation * TraceColor(scatteredRay, numBounces + 1);
+                    return attenuation * TraceColor(scatteredRay, numBounces + 1);
+                }
+
+                return float3.zero;
             }
 
             float t = 0.5f * (ray.direction.y + 1.0f);
@@ -140,12 +202,15 @@
                         {
                             float3 hitPoint = ray.origin + hitDistance * ray.direction;
                             float3 hitNormal = math.normalize(hitPoint - sphere.position);
+
                             hitRecord.point = hitPoint;
                             hitRecord.normal = hitNormal;
                             hitRecord.material = sphere.material;
                             hitRecord.albedo = sphere.albedo;
                             hitRecord.distance = hitDistance;
                             hitRecord.fuzz = sphere.fuzz;
+                            hitRecord.refractiveIndex = sphere.refractiveIndex;
+
                             hasHit = true;
                             continue;
                         }
@@ -158,12 +223,15 @@
                         {
                             float3 hitPoint = ray.origin + hitDistance * ray.direction;
                             float3 hitNormal = math.normalize(hitPoint - sphere.position);
+
                             hitRecord.point = hitPoint;
                             hitRecord.normal = hitNormal;
                             hitRecord.material = sphere.material;
                             hitRecord.albedo = sphere.albedo;
                             hitRecord.distance = hitDistance;
                             hitRecord.fuzz = sphere.fuzz;
+                            hitRecord.refractiveIndex = sphere.refractiveIndex;
+
                             hasHit = true;
                         }
                     }

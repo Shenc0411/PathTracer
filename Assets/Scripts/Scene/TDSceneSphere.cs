@@ -9,5 +9,6 @@
         public ObjectMaterial material = ObjectMaterial.Lambertian;
         public Color color = Color.red;
         public float fuzz = 0.5f;
+        public float refractiveIndex = 1.5f;
     }
 }

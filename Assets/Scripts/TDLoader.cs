@@ -9,7 +9,8 @@
     public enum ObjectMaterial
     {
         Lambertian,
-        Metal
+        Metal,
+        Refractive
     }
 
     public static class TDLoader
@@ -28,7 +29,8 @@
                     new Unity.Mathematics.float3(sceneSphere.color.r, sceneSphere.color.g, sceneSphere.color.b),
                     sceneSphere.transform.lossyScale.x * 0.5f, 
                     TDLoader.GetMaterialIndex(sceneSphere.material),
-                    sceneSphere.fuzz));
+                    sceneSphere.fuzz,
+                    sceneSphere.refractiveIndex));
             }
 
             return new TDScene(camera, spheres);
@@ -44,6 +46,11 @@
             {
                 return 2.0f;
             }
+            else if (material == ObjectMaterial.Refractive)
+            {
+                return 3.0f;
+            }
+
             return 1.0f;
         }
     }
