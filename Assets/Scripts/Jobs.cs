@@ -2,119 +2,31 @@
 {
     using System.Collections;
     using System.Collections.Generic;
-    using Unity.Mathematics;
     using UnityEngine;
+    using UnityEngine.Jobs;
+    using Unity.Jobs;
+    using Unity.Collections;
+    using Unity.Mathematics;
     using TorchDragon.CPU;
 
-    public class TDRenderer : MonoBehaviour
+    public struct TraceColorJob : IJobParallelFor
     {
-        public TDScene scene;
+        public NativeArray<TDRay> rays;
         public TDRenderConfiguration renderConfiguration;
-        public GameObject renderPlane;
-        private MeshRenderer meshRenderer;
+        public TDScene scene;
+        public Texture2D texture;
+        public float upperBoundOne;
+        public float3 ambientLight;
 
-        private List<TDRay> rays;
-        private float3 ambientLight;
-
-        private readonly float upperBoundOne = 1.0f - float.Epsilon;
-
-        public void Render()
+        public void Execute(int index)
         {
-            this.meshRenderer = this.renderPlane.GetComponent<MeshRenderer>();
-            this.renderPlane.transform.localScale = new Vector3(scene.camera.aspectRatio, 0.0f, 1.0f);
-            this.ambientLight = new float3(this.renderConfiguration.ambientLight.r, this.renderConfiguration.ambientLight.g, this.renderConfiguration.ambientLight.b) * this.renderConfiguration.ambientLightIntensity;
-            this.rays = this.SpawnRays();
-
-            this.meshRenderer.material.mainTexture = CPURender();
-        }
-
-        public Texture CPURender()
-        {
-            Texture2D texture = new Texture2D((int)this.scene.camera.pixelResolution.x, (int)this.scene.camera.pixelResolution.y);
-
-            Dictionary<int2, float3> colors = new Dictionary<int2, float3>();
-
-            for(int i = 0; i < rays.Count; ++i)
-            {
-                if (colors.ContainsKey(rays[i].uv))
-                {
-                    colors[rays[i].uv] += TraceColor(rays[i], 0);
-                }
-                else
-                {
-                    colors.Add(rays[i].uv, TraceColor(rays[i], 0));
-                }
-            }
-
-            for (int i = 0; i < this.scene.camera.pixelResolution.x; ++i)
-            {
-                for (int j = 0; j < this.scene.camera.pixelResolution.y; ++j)
-                {
-                    float3 color = colors[new int2(i, j)] / this.renderConfiguration.sampleRate;
-                    texture.SetPixel(i, j, new Color(color.x, color.y, color.z));
-                }
-            }
-
-            texture.filterMode = FilterMode.Point;
-            texture.Apply();
-
-            return texture;
-        }
-
-        private void Start()
-        {
-            this.scene = TDLoader.LoadScene();
-            //Debug.Log(RandomPointInUnitSphere());
-            System.Diagnostics.Stopwatch sw = new System.Diagnostics.Stopwatch();
-            sw.Start();
-
-            this.Render();
-
-            sw.Stop();
-
-            Debug.Log(sw.Elapsed);
-        }
-
-        private List<TDRay> SpawnRays()
-        {
-            TDCamera camera = this.scene.camera;
-
-            float worldNearPlaneHeight = camera.nearPlaneDistance * math.tan(camera.verticalFOV * Mathf.Deg2Rad * 0.5f) * 2.0f;
-            float worldNearPlaneWidth = camera.aspectRatio * worldNearPlaneHeight;
-
-            float worldHeightPerPixel = worldNearPlaneHeight / camera.pixelResolution.y;
-            float worldWidthPerPixel = worldNearPlaneWidth / camera.pixelResolution.x;
-
-            float3 worldLowerLeftCorner = camera.position + camera.forward * camera.nearPlaneDistance - camera.right * 0.5f * worldNearPlaneWidth - camera.up * 0.5f * worldNearPlaneHeight;
-
-            List<TDRay> rays = new List<TDRay>();
-
-            //Spawn Screen Rays
-            for (int i = 0; i < camera.pixelResolution.x; ++i)
-            {
-                for (int j = 0; j < camera.pixelResolution.y; ++j)
-                {
-                    float3 currentPixelPosition = worldLowerLeftCorner + camera.right * worldWidthPerPixel * i + camera.up * worldHeightPerPixel * j;
-
-                    for (int k = 0; k < renderConfiguration.sampleRate; ++k)
-                    {
-                        float u = UnityEngine.Random.Range(0.0f, this.upperBoundOne) * worldWidthPerPixel;
-                        float v = UnityEngine.Random.Range(0.0f, this.upperBoundOne) * worldHeightPerPixel;
-                        float3 offset = new float3(u, v, 0);
-
-                        TDRay ray = new TDRay(camera.position, currentPixelPosition + offset - camera.position, new int2(i, j));
-                        rays.Add(ray);
-                    }
-                }
-            }
-
-            return rays;
+            throw new System.NotImplementedException();
         }
 
         private float3 TraceColor(TDRay ray, int numBounces)
         {
 
-            if(numBounces > renderConfiguration.maxBounces)
+            if (numBounces > renderConfiguration.maxBounces)
             {
                 return float3.zero;
             }
@@ -127,7 +39,7 @@
                 float3 scatteredRayDirection = float3.zero;
                 bool scatter = false;
 
-                if(hitRecord.material == 1.0f)
+                if (hitRecord.material == 1.0f)
                 {
                     //Lambertian
                     float3 target = hitRecord.point + hitRecord.normal + this.RandomPointInUnitSphere();
@@ -135,7 +47,7 @@
                     attenuation = hitRecord.albedo;
                     scatter = true;
                 }
-                else if(hitRecord.material == 2.0f)
+                else if (hitRecord.material == 2.0f)
                 {
                     //Metal
                     scatteredRayDirection = ray.direction - 2.0f * math.dot(ray.direction, hitRecord.normal) * hitRecord.normal
@@ -148,7 +60,7 @@
                     }
 
                 }
-                else if(hitRecord.material == 3.0f)
+                else if (hitRecord.material == 3.0f)
                 {
                     //Refractive
                     float3 reflectedDirection = ray.direction - 2.0f * math.dot(ray.direction, hitRecord.normal) * hitRecord.normal;
@@ -159,7 +71,7 @@
                     float niOverNt = 0.0f;
                     attenuation = new float3(1.0f, 1.0f, 1.0f);
 
-                    if(math.dot(ray.direction, hitRecord.normal) > 0.0f)
+                    if (math.dot(ray.direction, hitRecord.normal) > 0.0f)
                     {
                         outwardNormal = -hitRecord.normal;
                         niOverNt = hitRecord.refractiveIndex;
@@ -174,9 +86,9 @@
 
                     float dt = math.dot(ray.direction, hitRecord.normal);
                     float discriminant = 1.0f - niOverNt * niOverNt * (1.0f - dt * dt);
-                    
 
-                    if(discriminant > 0.0f)
+
+                    if (discriminant > 0.0f)
                     {
                         //Refract
                         refractedDirection = niOverNt * (ray.direction - outwardNormal * dt) - outwardNormal * math.sqrt(discriminant);
@@ -186,7 +98,7 @@
                         reflectProbablity = r0 + (1 - r0) * math.pow((1.0f - cosine), 5.0f);
                     }
 
-                    if(UnityEngine.Random.Range(0.0f, upperBoundOne) < reflectProbablity)
+                    if (UnityEngine.Random.Range(0.0f, upperBoundOne) < reflectProbablity)
                     {
                         scatteredRayDirection = reflectedDirection;
                     }
@@ -209,14 +121,14 @@
             }
 
             return this.ambientLight;
-        } 
+        }
 
         private bool RaySphereCollision(TDRay ray, float hitDistanceMin, float hitDistanceMax, ref TDRayHitRecord hitRecord)
         {
             bool hasHit = false;
             hitRecord.distance = float.MaxValue;
 
-            foreach(TDSphere sphere in this.scene.spheres)
+            foreach (TDSphere sphere in this.scene.spheres)
             {
                 float3 oc = ray.origin - sphere.position;
                 float a = math.dot(ray.direction, ray.direction);
@@ -227,9 +139,9 @@
                 {
                     float hitDistance = (-b - math.sqrt(discriminant)) / (2.0f * a);
 
-                    if(hitDistance > hitDistanceMin && hitDistance < hitDistanceMax)
+                    if (hitDistance > hitDistanceMin && hitDistance < hitDistanceMax)
                     {
-                        if(!hasHit || hitDistance < hitRecord.distance)
+                        if (!hasHit || hitDistance < hitRecord.distance)
                         {
                             float3 hitPoint = ray.origin + hitDistance * ray.direction;
                             float3 hitNormal = math.normalize(hitPoint - sphere.position);
@@ -286,7 +198,6 @@
             } while (math.lengthsq(p) >= 1.0f);
             return p;
         }
-
     }
 
 }

@@ -9,16 +9,13 @@
     {
         public float3 origin;
         public float3 direction;
+        public int2 uv;
 
-        public TDRay(float3 origin, float3 direction)
+        public TDRay(float3 origin, float3 direction, int2 uv)
         {
             this.origin = origin;
             this.direction = math.normalize(direction);
-        }
-
-        public float3 PointAtParameter(float t)
-        {
-            return origin + direction * t;
+            this.uv = uv;
         }
     }
 
