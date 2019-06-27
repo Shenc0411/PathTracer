@@ -10,15 +10,29 @@
         public float3 origin;
         public float3 direction;
 
-        public TDRay(float3 origin, float direction)
+        public TDRay(float3 origin, float3 direction)
         {
             this.origin = origin;
-            this.direction = direction;
+            this.direction = math.normalize(direction);
         }
 
         public float3 PointAtParameter(float t)
         {
             return origin + direction * t;
+        }
+    }
+
+    public struct TDRayHitRecord
+    {
+        public float3 hitPoint;
+        public float3 hitNormal;
+        public float hitDistance;
+
+        public TDRayHitRecord(float3 hitPoint, float3 hitNormal, float hitDistance)
+        {
+            this.hitPoint = hitPoint;
+            this.hitNormal = hitNormal;
+            this.hitDistance = hitDistance;
         }
     }
 
@@ -40,7 +54,8 @@
         public float3 up;
         public float3 right;
         public float3 position;
-        public int2 pixelResolution;
+        public float2 pixelResolution;
+        public float nearPlaneDistance;
         public float aspectRatio; // width / height
         public float verticalFOV;
 
@@ -52,20 +67,21 @@
             this.right = camera.transform.right;
             this.pixelResolution.x = camera.pixelWidth;
             this.pixelResolution.y = camera.pixelHeight;
+            this.nearPlaneDistance = camera.nearClipPlane;
             this.aspectRatio = camera.aspect;
             this.verticalFOV = camera.fieldOfView;
         }
     }
 
-    public class TDScene
+    public struct TDScene
     {
         public TDCamera camera;
-        public TDSphere[] spheres;
+        public List<TDSphere> spheres;
 
         public TDScene(TDCamera camera, List<TDSphere> spheres)
         {
             this.camera = camera;
-            this.spheres = spheres.ToArray();
+            this.spheres = spheres;
         }
     }
 }

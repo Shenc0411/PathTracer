@@ -14,6 +14,13 @@
 
             List<TDSphere> spheres = new List<TDSphere>();
 
+            TDSceneSphere[] sceneSpheres = MonoBehaviour.FindObjectsOfType<TDSceneSphere>();
+
+            foreach(TDSceneSphere sceneSphere in sceneSpheres)
+            {
+                spheres.Add(new TDSphere(sceneSphere.transform.position, sceneSphere.transform.lossyScale.x * 0.5f));
+            }
+
             return new TDScene(camera, spheres);
         }
     }
