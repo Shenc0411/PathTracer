@@ -27,6 +27,7 @@
         public float3 point;
         public float3 normal;
         public float3 albedo;
+        public float3 emission;
         public float distance;
         public float material;
         public float fuzz;
@@ -37,15 +38,17 @@
     {
         public float3 position;
         public float3 albedo;
+        public float3 emission;
         public float radius;
         public float material; // 1 = Lambertian, 2 = metal, 3 = refracive
         public float fuzz; // Used in metal materials
         public float refractiveIndex;
 
-        public TDSphere(float3 position, float3 albedo, float radius, float material, float fuzz, float refractiveIndex)
+        public TDSphere(float3 position, float3 albedo, float3 emission, float radius, float material, float fuzz, float refractiveIndex)
         {
             this.position = position;
             this.albedo = albedo;
+            this.emission = emission;
             this.radius = radius;
             this.material = material;
             this.fuzz = fuzz;

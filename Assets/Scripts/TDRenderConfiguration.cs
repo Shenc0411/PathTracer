@@ -9,6 +9,8 @@
     {
         public int sampleRate;
         public int maxBounces;
+        public Color ambientLight;
+        public float ambientLightIntensity;
     }
 
 }

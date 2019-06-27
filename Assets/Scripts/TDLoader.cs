@@ -26,7 +26,8 @@
             foreach(TDSceneSphere sceneSphere in sceneSpheres)
             {
                 spheres.Add(new TDSphere(sceneSphere.transform.position,
-                    new Unity.Mathematics.float3(sceneSphere.color.r, sceneSphere.color.g, sceneSphere.color.b),
+                    new Unity.Mathematics.float3(sceneSphere.albedo.r, sceneSphere.albedo.g, sceneSphere.albedo.b),
+                    sceneSphere.emissionIntensity * new Unity.Mathematics.float3(sceneSphere.emission.r, sceneSphere.emission.g, sceneSphere.emission.b),
                     sceneSphere.transform.lossyScale.x * 0.5f, 
                     TDLoader.GetMaterialIndex(sceneSphere.material),
                     sceneSphere.fuzz,

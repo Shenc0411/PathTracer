@@ -13,12 +13,15 @@
         public GameObject renderPlane;
         private MeshRenderer meshRenderer;
 
+        private float3 ambientLight;
+
         private readonly float upperBoundOne = 1.0f - float.Epsilon;
 
         public void Render()
         {
             this.meshRenderer = this.renderPlane.GetComponent<MeshRenderer>();
             this.renderPlane.transform.localScale = new Vector3(scene.camera.aspectRatio, 0.0f, 1.0f);
+            this.ambientLight = new float3(this.renderConfiguration.ambientLight.r, this.renderConfiguration.ambientLight.g, this.renderConfiguration.ambientLight.b) * this.renderConfiguration.ambientLightIntensity;
 
             this.meshRenderer.material.mainTexture = CPURender();
         }
@@ -169,15 +172,13 @@
                 {
                     TDRay scatteredRay = new TDRay(hitRecord.point, scatteredRayDirection);
 
-                    return attenuation * TraceColor(scatteredRay, numBounces + 1);
+                    return hitRecord.emission + attenuation * TraceColor(scatteredRay, numBounces + 1);
                 }
 
                 return float3.zero;
             }
 
-            float t = 0.5f * (ray.direction.y + 1.0f);
-
-            return new float3(1.0f - t, 1.0f - t, 1.0f - t) + t * new float3(0.5f, 0.7f, 1.0f);
+            return this.ambientLight;
         } 
 
         private bool RaySphereCollision(TDRay ray, float hitDistanceMin, float hitDistanceMax, ref TDRayHitRecord hitRecord)
@@ -207,6 +208,7 @@
                             hitRecord.normal = hitNormal;
                             hitRecord.material = sphere.material;
                             hitRecord.albedo = sphere.albedo;
+                            hitRecord.emission = sphere.emission;
                             hitRecord.distance = hitDistance;
                             hitRecord.fuzz = sphere.fuzz;
                             hitRecord.refractiveIndex = sphere.refractiveIndex;
@@ -228,6 +230,7 @@
                             hitRecord.normal = hitNormal;
                             hitRecord.material = sphere.material;
                             hitRecord.albedo = sphere.albedo;
+                            hitRecord.emission = sphere.emission;
                             hitRecord.distance = hitDistance;
                             hitRecord.fuzz = sphere.fuzz;
                             hitRecord.refractiveIndex = sphere.refractiveIndex;
