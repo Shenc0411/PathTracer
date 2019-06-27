@@ -7,8 +7,8 @@
 
     public struct TDRay
     {
-        float3 origin;
-        float3 direction;
+        public float3 origin;
+        public float3 direction;
 
         public TDRay(float3 origin, float direction)
         {
@@ -24,8 +24,8 @@
 
     public struct TDSphere
     {
-        float3 position;
-        float radius;
+        public float3 position;
+        public float radius;
 
         public TDSphere(float3 position, float radius)
         {
@@ -36,13 +36,13 @@
 
     public struct TDCamera
     {
-        float3 forward;
-        float3 up;
-        float3 right;
-        float3 position;
-        int2 pixelResolution;
-        float aspectRatio; // width / height
-        float verticalFOV;
+        public float3 forward;
+        public float3 up;
+        public float3 right;
+        public float3 position;
+        public int2 pixelResolution;
+        public float aspectRatio; // width / height
+        public float verticalFOV;
 
         public TDCamera(Camera camera)
         {
@@ -57,10 +57,10 @@
         }
     }
 
-    public struct TDScene
+    public class TDScene
     {
-        TDCamera camera;
-        TDSphere[] spheres;
+        public TDCamera camera;
+        public TDSphere[] spheres;
 
         public TDScene(TDCamera camera, List<TDSphere> spheres)
         {

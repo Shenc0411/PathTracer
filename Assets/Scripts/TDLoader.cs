@@ -3,19 +3,18 @@
     using System.Collections;
     using System.Collections.Generic;
     using UnityEngine;
+    using TorchDragon.CPU;
+    using TorchDragon.Scene;
 
-    public class TDLoader : MonoBehaviour
+    public static class TDLoader
     {
-        // Start is called before the first frame update
-        void Start()
+        public static TDScene LoadScene()
         {
+            TDCamera camera = new TDCamera(Camera.main);
 
-        }
+            List<TDSphere> spheres = new List<TDSphere>();
 
-        // Update is called once per frame
-        void Update()
-        {
-
+            return new TDScene(camera, spheres);
         }
     }
 
