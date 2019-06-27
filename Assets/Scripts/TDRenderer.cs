@@ -69,7 +69,11 @@
         {
             this.scene = TDLoader.LoadScene();
             //Debug.Log(RandomPointInUnitSphere());
+            System.Diagnostics.Stopwatch sw = new System.Diagnostics.Stopwatch();
+            sw.Start();
             this.Render();
+            sw.Stop();
+            Debug.Log(sw.Elapsed);
         }
 
         private float3 Color(TDRay ray)
