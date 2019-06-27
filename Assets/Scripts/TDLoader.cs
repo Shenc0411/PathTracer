@@ -6,6 +6,12 @@
     using TorchDragon.CPU;
     using TorchDragon.Scene;
 
+    public enum ObjectMaterial
+    {
+        Lambertian,
+        Metal
+    }
+
     public static class TDLoader
     {
         public static TDScene LoadScene()
@@ -18,10 +24,27 @@
 
             foreach(TDSceneSphere sceneSphere in sceneSpheres)
             {
-                spheres.Add(new TDSphere(sceneSphere.transform.position, sceneSphere.transform.lossyScale.x * 0.5f));
+                spheres.Add(new TDSphere(sceneSphere.transform.position,
+                    new Unity.Mathematics.float3(sceneSphere.color.r, sceneSphere.color.g, sceneSphere.color.b),
+                    sceneSphere.transform.lossyScale.x * 0.5f, 
+                    TDLoader.GetMaterialIndex(sceneSphere.material),
+                    sceneSphere.fuzz));
             }
 
             return new TDScene(camera, spheres);
+        }
+
+        public static float GetMaterialIndex(ObjectMaterial material)
+        {
+            if (material == ObjectMaterial.Lambertian)
+            {
+                return 1.0f;
+            }
+            else if (material == ObjectMaterial.Metal)
+            {
+                return 2.0f;
+            }
+            return 1.0f;
         }
     }
 

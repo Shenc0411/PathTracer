@@ -24,27 +24,29 @@
 
     public struct TDRayHitRecord
     {
-        public float3 hitPoint;
-        public float3 hitNormal;
-        public float hitDistance;
-
-        public TDRayHitRecord(float3 hitPoint, float3 hitNormal, float hitDistance)
-        {
-            this.hitPoint = hitPoint;
-            this.hitNormal = hitNormal;
-            this.hitDistance = hitDistance;
-        }
+        public float3 point;
+        public float3 normal;
+        public float3 albedo;
+        public float distance;
+        public float material;
+        public float fuzz;
     }
 
     public struct TDSphere
     {
         public float3 position;
+        public float3 albedo;
         public float radius;
+        public float material; // 1 = Lambertian, 2 = metal
+        public float fuzz; // Used in metal materials
 
-        public TDSphere(float3 position, float radius)
+        public TDSphere(float3 position, float3 albedo, float radius, float material, float fuzz)
         {
             this.position = position;
+            this.albedo = albedo;
             this.radius = radius;
+            this.material = material;
+            this.fuzz = fuzz;
         }
     }
 

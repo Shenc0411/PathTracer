@@ -8,6 +8,7 @@
     public struct TDRenderConfiguration
     {
         public int sampleRate;
+        public int maxBounces;
     }
 
 }
