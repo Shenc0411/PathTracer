@@ -7,7 +7,7 @@
     [System.Serializable]
     public struct TDRenderConfiguration
     {
-        
+        public int sampleRate;
     }
 
 }

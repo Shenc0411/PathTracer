@@ -12,7 +12,6 @@
         public TDRenderConfiguration renderConfiguration;
         public GameObject renderPlane;
         private MeshRenderer meshRenderer;
-        private Unity.Mathematics.Random random = new Unity.Mathematics.Random();
 
         public void Render()
         {
@@ -37,17 +36,26 @@
             Texture2D texture = new Texture2D((int)camera.pixelResolution.x, (int)camera.pixelResolution.y);
 
             //Spawn Screen Rays
-            for(int i = 0; i < camera.pixelResolution.x; ++i)
+            for (int i = 0; i < camera.pixelResolution.x; ++i)
             {
-                for(int j = 0; j < camera.pixelResolution.y; ++j)
+                for (int j = 0; j < camera.pixelResolution.y; ++j)
                 {
+                    float3 color = new float3(0.0f, 0.0f, 0.0f);
                     float3 currentPixelPosition = worldLowerLeftCorner + camera.right * worldWidthPerPixel * i + camera.up * worldHeightPerPixel * j;
 
-                    TDRay ray = new TDRay(camera.position, currentPixelPosition - camera.position);
+                    for (int k = 0; k < renderConfiguration.sampleRate; ++k)
+                    {
+                        float u = UnityEngine.Random.Range(0.0f, 1.0f) * worldWidthPerPixel;
+                        float v = UnityEngine.Random.Range(0.0f, 1.0f) * worldHeightPerPixel;
+                        float3 offset = new float3(u, v, 0);
 
-                    float3 result = Color(ray);
+                        TDRay ray = new TDRay(camera.position, currentPixelPosition + offset - camera.position);
+                        color += Color(ray);
+                    }
 
-                    texture.SetPixel(i, j, new UnityEngine.Color(result.x, result.y, result.z));
+                    color /= renderConfiguration.sampleRate;
+
+                    texture.SetPixel(i, j, new UnityEngine.Color(color.x, color.y, color.z));
                 }
             }
 
@@ -60,7 +68,7 @@
         private void Start()
         {
             this.scene = TDLoader.LoadScene();
-
+            //Debug.Log(RandomPointInUnitSphere());
             this.Render();
         }
 
@@ -69,10 +77,17 @@
 
             TDRayHitRecord hitRecord = new TDRayHitRecord();
 
-            RaySphereCollision(ray, 0.0f, float.MaxValue, ref hitRecord);
+            if (RaySphereCollision(ray, 0.0001f, float.MaxValue, ref hitRecord))
+            {
+                float3 target = hitRecord.hitPoint + hitRecord.hitNormal + this.RandomPointInUnitSphere();
+                return 0.5f * Color(new TDRay(hitRecord.hitPoint, target - hitRecord.hitPoint));
+                /*return 0.5f * (hitRecord.hitNormal + new float3(1.0f, 1.0f, 1.0f));*/
+            }
 
-            return hitRecord.hitNormal;
-        }
+            float t = 0.5f * (ray.direction.y + 1.0f);
+
+            return new float3(1.0f - t, 1.0f - t, 1.0f - t) + t * new float3(0.5f, 0.7f, 1.0f);
+        } 
 
         private bool RaySphereCollision(TDRay ray, float hitDistanceMin, float hitDistanceMax, ref TDRayHitRecord hitRecord)
         {
@@ -99,24 +114,38 @@
                             hitRecord.hitPoint = hitPoint;
                             hitRecord.hitNormal = hitNormal;
                             hitRecord.hitDistance = hitDistance;
+                            hasHit = true;
                             continue;
                         }
                     }
 
                     hitDistance = (-b + math.sqrt(discriminant)) / (2.0f * a);
-
-                    if (!hasHit || hitDistance < hitRecord.hitDistance)
+                    if (hitDistance > hitDistanceMin && hitDistance < hitDistanceMax)
                     {
-                        float3 hitPoint = ray.origin + hitDistance * ray.direction;
-                        float3 hitNormal = math.normalize(hitPoint - sphere.position);
-                        hitRecord.hitPoint = hitPoint;
-                        hitRecord.hitNormal = hitNormal;
-                        hitRecord.hitDistance = hitDistance;
+                        if (!hasHit || hitDistance < hitRecord.hitDistance)
+                        {
+                            float3 hitPoint = ray.origin + hitDistance * ray.direction;
+                            float3 hitNormal = math.normalize(hitPoint - sphere.position);
+                            hitRecord.hitPoint = hitPoint;
+                            hitRecord.hitNormal = hitNormal;
+                            hitRecord.hitDistance = hitDistance;
+                            hasHit = true;
+                        }
                     }
                 }
             }
 
             return hasHit;
+        }
+
+        private float3 RandomPointInUnitSphere()
+        {
+            float3 p;
+            do
+            {
+                p = 2.0f * new float3(UnityEngine.Random.Range(0.0f, 1.0f), UnityEngine.Random.Range(0.0f, 1.0f), UnityEngine.Random.Range(0.0f, 1.0f)) - new float3(1.0f, 1.0f, 1.0f);
+            } while (math.lengthsq(p) >= 1.0f);
+            return p;
         }
 
     }
