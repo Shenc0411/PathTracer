@@ -19,7 +19,7 @@
         private float3 ambientLight;
         private float worldHeightPerPixel;
         private float worldWidthPerPixel;
-
+        private NativeArray<Color> colors;
         private readonly float upperBoundOne = 1.0f - float.Epsilon;
 
         public void Render()
@@ -41,7 +41,7 @@
 
             PixelColorJob job = new PixelColorJob();
             job.ambientLight = this.ambientLight;
-            job.colors = new NativeArray<Color>(length, Allocator.TempJob);
+            job.colors = colors;
             job.renderConfiguration = this.renderConfiguration;
             job.cameraPosition = this.scene.camera.position;
             job.spheres = new NativeArray<TDSphere>(this.scene.spheres.ToArray(), Allocator.TempJob);
@@ -59,7 +59,6 @@
                 texture.SetPixel(i / pixelResolutionY, i % pixelResolutionY, job.colors[i]);
             }
 
-            job.colors.Dispose();
             job.screenPixelPositions.Dispose();
             job.spheres.Dispose();
 
@@ -72,15 +71,35 @@
         private void Start()
         {
             this.scene = TDLoader.LoadScene();
+            int pixelResolutionX = (int)this.scene.camera.pixelResolution.x;
+            int pixelResolutionY = (int)this.scene.camera.pixelResolution.y;
+
+            this.colors = new NativeArray<Color>(pixelResolutionX * pixelResolutionY, Allocator.Persistent);
+
             //Debug.Log(RandomPointInUnitSphere());
-            System.Diagnostics.Stopwatch sw = new System.Diagnostics.Stopwatch();
-            sw.Start();
 
-            this.Render();
 
-            sw.Stop();
+            //this.Render();
 
-            Debug.Log(sw.Elapsed);
+            this.StartCoroutine(RenderProgressive());
+        }
+
+        private void OnDestroy()
+        {
+            this.colors.Dispose();
+        }
+
+        private IEnumerator RenderProgressive()
+        {
+            while (true)
+            {
+                System.Diagnostics.Stopwatch sw = new System.Diagnostics.Stopwatch();
+                sw.Start();
+                this.Render();
+                sw.Stop();
+                Debug.Log(sw.Elapsed);
+                yield return new WaitForSeconds(1.0f);
+            }
         }
 
         private NativeArray<float3> GetScreenPixelPositions()

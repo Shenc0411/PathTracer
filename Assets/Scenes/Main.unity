@@ -567,7 +567,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   renderConfiguration:
-    sampleRate: 256
+    sampleRate: 8
     maxBounces: 5
     ambientLight: {r: 1, g: 1, b: 1, a: 0}
     ambientLightIntensity: 0.4

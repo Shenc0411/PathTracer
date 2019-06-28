@@ -12,9 +12,9 @@
 
     public struct PixelColorJob : IJobParallelFor
     {
-        [ReadOnly, NativeDisableParallelForRestriction] public NativeArray<float3> screenPixelPositions;
-        [WriteOnly, NativeDisableParallelForRestriction] public NativeArray<Color> colors;
-        [ReadOnly, NativeDisableParallelForRestriction] public NativeArray<TDSphere> spheres;
+        [NativeDisableParallelForRestriction] public NativeArray<float3> screenPixelPositions;
+        [NativeDisableParallelForRestriction] public NativeArray<Color> colors;
+        [NativeDisableParallelForRestriction] public NativeArray<TDSphere> spheres;
         public TDRenderConfiguration renderConfiguration;
         public float3 cameraPosition;
         public float upperBoundOne;
@@ -26,7 +26,8 @@
         [BurstCompile]
         public void Execute(int index)
         {
-            float3 color = float3.zero;
+            float3 color = new float3(colors[index].r, colors[index].g, colors[index].b);
+            float3 sum = float3.zero;
             float3 pixelPosition = this.screenPixelPositions[index];
 
             TDRay ray;
@@ -39,10 +40,12 @@
 
                 ray.direction = math.normalize(pixelPosition + new float3(u, v, 0) - this.cameraPosition);
 
-                color += this.TraceColor(ray);
+                sum += this.TraceColor(ray);
             }
 
-            color /= this.renderConfiguration.sampleRate;
+            sum /= this.renderConfiguration.sampleRate;
+
+            color = (color + sum) * 0.5f;
             colors[index] = new Color(color.x, color.y, color.z);
         }
 
