@@ -7,128 +7,179 @@
     using Unity.Jobs;
     using Unity.Collections;
     using Unity.Mathematics;
+    using Unity.Burst;
     using TorchDragon.CPU;
 
-    public struct TraceColorJob : IJobParallelFor
+    public struct PixelColorJob : IJobParallelFor
     {
-        public NativeHashMap<int2, NativeArray<TDRay>> pixelRayMap;
-        public NativeArray<Color> colors;
+        [ReadOnly, NativeDisableParallelForRestriction] public NativeArray<float3> screenPixelPositions;
+        [WriteOnly, NativeDisableParallelForRestriction] public NativeArray<Color> colors;
+        [ReadOnly, NativeDisableParallelForRestriction] public NativeArray<TDSphere> spheres;
         public TDRenderConfiguration renderConfiguration;
-        public TDScene scene;
-        public Texture2D texture;
+        public float3 cameraPosition;
         public float upperBoundOne;
         public float3 ambientLight;
+        public float worldWidthPerPixel;
+        public float worldHeightPerPixel;
+        public Unity.Mathematics.Random random;
 
+        [BurstCompile]
         public void Execute(int index)
         {
-            
-        }
+            float3 color = float3.zero;
+            float3 pixelPosition = this.screenPixelPositions[index];
 
-        private float3 TraceColor(TDRay ray, int numBounces)
-        {
-            if (numBounces > renderConfiguration.maxBounces)
+            TDRay ray;
+            ray.origin = this.cameraPosition;
+
+            for (int i = 0; i < this.renderConfiguration.sampleRate; ++i)
             {
-                return float3.zero;
+                float u = random.NextFloat() * this.worldWidthPerPixel;
+                float v = random.NextFloat() * this.worldHeightPerPixel;
+
+                ray.direction = math.normalize(pixelPosition + new float3(u, v, 0) - this.cameraPosition);
+
+                color += this.TraceColor(ray);
             }
 
+            color /= this.renderConfiguration.sampleRate;
+            colors[index] = new Color(color.x, color.y, color.z);
+        }
+
+        [BurstCompile]
+        private float3 TraceColor(TDRay ray)
+        {
             TDRayHitRecord hitRecord = new TDRayHitRecord();
+            float3[] emissions = new float3[this.renderConfiguration.maxBounces];
+            float3[] attenuations = new float3[this.renderConfiguration.maxBounces];
+            float3 result = this.ambientLight;
+            int depth = this.renderConfiguration.maxBounces - 1;
 
-            if (RaySphereCollision(ray, 0.0001f, float.MaxValue, ref hitRecord))
+            for (int i = 0; i < this.renderConfiguration.maxBounces; ++i)
             {
-                float3 attenuation = float3.zero;
-                float3 scatteredRayDirection = float3.zero;
-                bool scatter = false;
+                attenuations[i] = this.ambientLight;
 
-                if (hitRecord.material == 1.0f)
+                if (RaySphereCollision(ray, 0.0001f, float.MaxValue, ref hitRecord))
                 {
-                    //Lambertian
-                    float3 target = hitRecord.point + hitRecord.normal + this.RandomPointInUnitSphere();
-                    scatteredRayDirection = target - hitRecord.point;
-                    attenuation = hitRecord.albedo;
-                    scatter = true;
-                }
-                else if (hitRecord.material == 2.0f)
-                {
-                    //Metal
-                    scatteredRayDirection = ray.direction - 2.0f * math.dot(ray.direction, hitRecord.normal) * hitRecord.normal
-                                        + hitRecord.fuzz * this.RandomPointInUnitSphere() * hitRecord.fuzz;
-                    attenuation = hitRecord.albedo;
 
-                    if (math.dot(scatteredRayDirection, hitRecord.normal) > 0.0f)
+                    float3 attenuation = float3.zero;
+                    float3 scatteredRayDirection = float3.zero;
+                    bool scatter = false;
+
+                    if (hitRecord.material == 1.0f)
                     {
+                        //Lambertian
+                        float3 target = hitRecord.point + hitRecord.normal + this.RandomPointInUnitSphere();
+                        scatteredRayDirection = target - hitRecord.point;
+                        attenuation = hitRecord.albedo;
+                        scatter = true;
+                    }
+                    else if (hitRecord.material == 2.0f)
+                    {
+                        //Metal
+                        scatteredRayDirection = ray.direction - 2.0f * math.dot(ray.direction, hitRecord.normal) * hitRecord.normal
+                                            + hitRecord.fuzz * this.RandomPointInUnitSphere() * hitRecord.fuzz;
+                        attenuation = hitRecord.albedo;
+
+                        if (math.dot(scatteredRayDirection, hitRecord.normal) > 0.0f)
+                        {
+                            scatter = true;
+                        }
+
+                    }
+                    else if (hitRecord.material == 3.0f)
+                    {
+                        //Refractive
+                        float3 reflectedDirection = ray.direction - 2.0f * math.dot(ray.direction, hitRecord.normal) * hitRecord.normal;
+                        float3 outwardNormal = float3.zero;
+                        float3 refractedDirection = float3.zero;
+                        float reflectProbablity = 1.0f;
+                        float cosine = 0.0f;
+                        float niOverNt = 0.0f;
+                        attenuation = new float3(1.0f, 1.0f, 1.0f);
+
+                        if (math.dot(ray.direction, hitRecord.normal) > 0.0f)
+                        {
+                            outwardNormal = -hitRecord.normal;
+                            niOverNt = hitRecord.refractiveIndex;
+                            cosine = hitRecord.refractiveIndex * math.dot(ray.direction, hitRecord.normal) / math.length(ray.direction);
+                        }
+                        else
+                        {
+                            outwardNormal = hitRecord.normal;
+                            niOverNt = 1.0f / hitRecord.refractiveIndex;
+                            cosine = -math.dot(ray.direction, hitRecord.normal) / math.length(ray.direction);
+                        }
+
+                        float dt = math.dot(ray.direction, hitRecord.normal);
+                        float discriminant = 1.0f - niOverNt * niOverNt * (1.0f - dt * dt);
+
+
+                        if (discriminant > 0.0f)
+                        {
+                            //Refract
+                            refractedDirection = niOverNt * (ray.direction - outwardNormal * dt) - outwardNormal * math.sqrt(discriminant);
+                            //Schlick Approximation
+                            float r0 = (1.0f - hitRecord.refractiveIndex) / (1.0f + hitRecord.refractiveIndex);
+                            r0 = r0 * r0;
+                            reflectProbablity = r0 + (1 - r0) * math.pow((1.0f - cosine), 5.0f);
+                        }
+
+                        if (random.NextFloat() < reflectProbablity)
+                        {
+                            scatteredRayDirection = reflectedDirection;
+                        }
+                        else
+                        {
+                            scatteredRayDirection = refractedDirection;
+                        }
+
                         scatter = true;
                     }
 
-                }
-                else if (hitRecord.material == 3.0f)
-                {
-                    //Refractive
-                    float3 reflectedDirection = ray.direction - 2.0f * math.dot(ray.direction, hitRecord.normal) * hitRecord.normal;
-                    float3 outwardNormal = float3.zero;
-                    float3 refractedDirection = float3.zero;
-                    float reflectProbablity = 1.0f;
-                    float cosine = 0.0f;
-                    float niOverNt = 0.0f;
-                    attenuation = new float3(1.0f, 1.0f, 1.0f);
-
-                    if (math.dot(ray.direction, hitRecord.normal) > 0.0f)
+                    if (scatter)
                     {
-                        outwardNormal = -hitRecord.normal;
-                        niOverNt = hitRecord.refractiveIndex;
-                        cosine = hitRecord.refractiveIndex * math.dot(ray.direction, hitRecord.normal) / math.length(ray.direction);
+                        //TDRay scatteredRay = new TDRay(hitRecord.point, scatteredRayDirection, ray.uv);
+
+                        ray.origin = hitRecord.point;
+                        ray.direction = math.normalize(scatteredRayDirection);
+
+                        emissions[i] = hitRecord.emission;
+                        attenuations[i] = attenuation;
+
+                        //return hitRecord.emission + attenuation * TraceColor(scatteredRay, numBounces + 1);
                     }
                     else
                     {
-                        outwardNormal = hitRecord.normal;
-                        niOverNt = 1.0f / hitRecord.refractiveIndex;
-                        cosine = -math.dot(ray.direction, hitRecord.normal) / math.length(ray.direction);
+                        depth = i;
+                        break;
                     }
 
-                    float dt = math.dot(ray.direction, hitRecord.normal);
-                    float discriminant = 1.0f - niOverNt * niOverNt * (1.0f - dt * dt);
-
-
-                    if (discriminant > 0.0f)
-                    {
-                        //Refract
-                        refractedDirection = niOverNt * (ray.direction - outwardNormal * dt) - outwardNormal * math.sqrt(discriminant);
-                        //Schlick Approximation
-                        float r0 = (1.0f - hitRecord.refractiveIndex) / (1.0f + hitRecord.refractiveIndex);
-                        r0 = r0 * r0;
-                        reflectProbablity = r0 + (1 - r0) * math.pow((1.0f - cosine), 5.0f);
-                    }
-
-                    if (UnityEngine.Random.Range(0.0f, upperBoundOne) < reflectProbablity)
-                    {
-                        scatteredRayDirection = reflectedDirection;
-                    }
-                    else
-                    {
-                        scatteredRayDirection = refractedDirection;
-                    }
-
-                    scatter = true;
+                    //return float3.zero;
                 }
-
-                if (scatter)
+                else
                 {
-                    TDRay scatteredRay = new TDRay(hitRecord.point, scatteredRayDirection, ray.uv);
-
-                    return hitRecord.emission + attenuation * TraceColor(scatteredRay, numBounces + 1);
+                    depth = i;
+                    break;
                 }
-
-                return float3.zero;
+                //return this.ambientLight;
             }
 
-            return this.ambientLight;
+            for (int i = depth; i >= 0; --i)
+            {
+                result = emissions[i] + result * attenuations[i];
+            }
+
+            return result;
         }
 
+        [BurstCompile]
         private bool RaySphereCollision(TDRay ray, float hitDistanceMin, float hitDistanceMax, ref TDRayHitRecord hitRecord)
         {
             bool hasHit = false;
             hitRecord.distance = float.MaxValue;
 
-            foreach (TDSphere sphere in this.scene.spheres)
+            foreach (TDSphere sphere in this.spheres)
             {
                 float3 oc = ray.origin - sphere.position;
                 float a = math.dot(ray.direction, ray.direction);
@@ -186,14 +237,15 @@
             return hasHit;
         }
 
+        [BurstCompile]
         private float3 RandomPointInUnitSphere()
         {
             float3 p;
             do
             {
-                p = 2.0f * new float3(UnityEngine.Random.Range(0.0f, this.upperBoundOne),
-                    UnityEngine.Random.Range(0.0f, this.upperBoundOne),
-                    UnityEngine.Random.Range(0.0f, this.upperBoundOne))
+                p = 2.0f * new float3(random.NextFloat(),
+                    random.NextFloat(),
+                    random.NextFloat())
                     - new float3(1.0f, 1.0f, 1.0f);
             } while (math.lengthsq(p) >= 1.0f);
             return p;

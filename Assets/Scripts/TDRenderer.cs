@@ -3,7 +3,8 @@
     using System.Collections;
     using System.Collections.Generic;
     using Unity.Mathematics;
-    using Unity.Collections
+    using Unity.Collections;
+    using Unity.Jobs;
     using UnityEngine;
     using TorchDragon.CPU;
 
@@ -16,6 +17,8 @@
 
         private List<TDRay> rays;
         private float3 ambientLight;
+        private float worldHeightPerPixel;
+        private float worldWidthPerPixel;
 
         private readonly float upperBoundOne = 1.0f - float.Epsilon;
 
@@ -24,37 +27,41 @@
             this.meshRenderer = this.renderPlane.GetComponent<MeshRenderer>();
             this.renderPlane.transform.localScale = new Vector3(scene.camera.aspectRatio, 0.0f, 1.0f);
             this.ambientLight = new float3(this.renderConfiguration.ambientLight.r, this.renderConfiguration.ambientLight.g, this.renderConfiguration.ambientLight.b) * this.renderConfiguration.ambientLightIntensity;
-            this.rays = this.SpawnRays();
 
             this.meshRenderer.material.mainTexture = CPURender();
         }
 
         public Texture CPURender()
         {
-            Texture2D texture = new Texture2D((int)this.scene.camera.pixelResolution.x, (int)this.scene.camera.pixelResolution.y);
+            int pixelResolutionX = (int)this.scene.camera.pixelResolution.x;
+            int pixelResolutionY = (int)this.scene.camera.pixelResolution.y;
 
-            Dictionary<int2, float3> colors = new Dictionary<int2, float3>();
+            Texture2D texture = new Texture2D(pixelResolutionX, pixelResolutionY);
+            int length = pixelResolutionX * pixelResolutionY;
 
-            for(int i = 0; i < rays.Count; ++i)
+            PixelColorJob job = new PixelColorJob();
+            job.ambientLight = this.ambientLight;
+            job.colors = new NativeArray<Color>(length, Allocator.TempJob);
+            job.renderConfiguration = this.renderConfiguration;
+            job.cameraPosition = this.scene.camera.position;
+            job.spheres = new NativeArray<TDSphere>(this.scene.spheres.ToArray(), Allocator.TempJob);
+            job.screenPixelPositions = this.GetScreenPixelPositions();
+            job.worldHeightPerPixel = this.worldHeightPerPixel;
+            job.worldWidthPerPixel = this.worldWidthPerPixel;
+            job.upperBoundOne = this.upperBoundOne;
+            job.random.InitState((uint)System.DateTime.Now.Second);
+            JobHandle jobHandle = job.Schedule(length, 100);
+
+            jobHandle.Complete();
+
+            for(int i = 0; i < length; ++i)
             {
-                if (colors.ContainsKey(rays[i].uv))
-                {
-                    colors[rays[i].uv] += TraceColor(rays[i]);
-                }
-                else
-                {
-                    colors.Add(rays[i].uv, TraceColor(rays[i]));
-                }
+                texture.SetPixel(i / pixelResolutionY, i % pixelResolutionY, job.colors[i]);
             }
 
-            for (int i = 0; i < this.scene.camera.pixelResolution.x; ++i)
-            {
-                for (int j = 0; j < this.scene.camera.pixelResolution.y; ++j)
-                {
-                    float3 color = colors[new int2(i, j)] / this.renderConfiguration.sampleRate;
-                    texture.SetPixel(i, j, new Color(color.x, color.y, color.z));
-                }
-            }
+            job.colors.Dispose();
+            job.screenPixelPositions.Dispose();
+            job.spheres.Dispose();
 
             texture.filterMode = FilterMode.Point;
             texture.Apply();
@@ -76,40 +83,31 @@
             Debug.Log(sw.Elapsed);
         }
 
-        private List<TDRay> SpawnRays()
+        private NativeArray<float3> GetScreenPixelPositions()
         {
             TDCamera camera = this.scene.camera;
 
             float worldNearPlaneHeight = camera.nearPlaneDistance * math.tan(camera.verticalFOV * Mathf.Deg2Rad * 0.5f) * 2.0f;
             float worldNearPlaneWidth = camera.aspectRatio * worldNearPlaneHeight;
 
-            float worldHeightPerPixel = worldNearPlaneHeight / camera.pixelResolution.y;
-            float worldWidthPerPixel = worldNearPlaneWidth / camera.pixelResolution.x;
+            worldHeightPerPixel = worldNearPlaneHeight / camera.pixelResolution.y;
+            worldWidthPerPixel = worldNearPlaneWidth / camera.pixelResolution.x;
 
             float3 worldLowerLeftCorner = camera.position + camera.forward * camera.nearPlaneDistance - camera.right * 0.5f * worldNearPlaneWidth - camera.up * 0.5f * worldNearPlaneHeight;
 
-            List<TDRay> rays = new List<TDRay>();
+            NativeArray<float3> pixelPositions = new NativeArray<float3>((int)camera.pixelResolution.x * (int)camera.pixelResolution.y, Allocator.TempJob);
 
-            //Spawn Screen Rays
             for (int i = 0; i < camera.pixelResolution.x; ++i)
             {
                 for (int j = 0; j < camera.pixelResolution.y; ++j)
                 {
                     float3 currentPixelPosition = worldLowerLeftCorner + camera.right * worldWidthPerPixel * i + camera.up * worldHeightPerPixel * j;
 
-                    for (int k = 0; k < renderConfiguration.sampleRate; ++k)
-                    {
-                        float u = UnityEngine.Random.Range(0.0f, this.upperBoundOne) * worldWidthPerPixel;
-                        float v = UnityEngine.Random.Range(0.0f, this.upperBoundOne) * worldHeightPerPixel;
-                        float3 offset = new float3(u, v, 0);
-
-                        TDRay ray = new TDRay(camera.position, currentPixelPosition + offset - camera.position, new int2(i, j));
-                        rays.Add(ray);
-                    }
+                    pixelPositions[i * (int)camera.pixelResolution.y + j] = currentPixelPosition;
                 }
             }
 
-            return rays;
+            return pixelPositions;
         }
 
         private float3 TraceColor(TDRay ray)
