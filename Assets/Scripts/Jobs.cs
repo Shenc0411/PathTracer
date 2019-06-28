@@ -11,7 +11,8 @@
 
     public struct TraceColorJob : IJobParallelFor
     {
-        public NativeArray<TDRay> rays;
+        public NativeHashMap<int2, NativeArray<TDRay>> pixelRayMap;
+        public NativeArray<Color> colors;
         public TDRenderConfiguration renderConfiguration;
         public TDScene scene;
         public Texture2D texture;
@@ -20,12 +21,11 @@
 
         public void Execute(int index)
         {
-            throw new System.NotImplementedException();
+            
         }
 
         private float3 TraceColor(TDRay ray, int numBounces)
         {
-
             if (numBounces > renderConfiguration.maxBounces)
             {
                 return float3.zero;
