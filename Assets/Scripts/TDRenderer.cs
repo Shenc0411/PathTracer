@@ -7,6 +7,7 @@
     using Unity.Jobs;
     using UnityEngine;
     using TorchDragon.CPU;
+    using System.Threading;
 
     public class TDRenderer : MonoBehaviour
     {
@@ -24,6 +25,10 @@
         private NativeArray<Color> colors;
         private readonly float upperBoundOne = 1.0f - float.Epsilon;
         private float3[] sphereicalFibSamples = new float3[4096];
+        private float3[] screenPixelPositions;
+        private float3[] accumulatedColor;
+        private Texture2D cpuTexture;
+        private int numIterations;
 
         public void Render()
         {
@@ -31,7 +36,15 @@
             this.renderPlane.transform.localScale = new Vector3(scene.camera.aspectRatio, 0.0f, 1.0f);
             this.ambientLight = new float3(this.renderConfiguration.ambientLight.r, this.renderConfiguration.ambientLight.g, this.renderConfiguration.ambientLight.b) * this.renderConfiguration.ambientLightIntensity;
 
-            this.meshRenderer.material.mainTexture = CPURender();
+            if(this.renderConfiguration.renderMode == RenderMode.CPU)
+            {
+                this.meshRenderer.material.mainTexture = CPURender();
+            }
+            else if(this.renderConfiguration.renderMode == RenderMode.GPU)
+            {
+                this.meshRenderer.material.mainTexture = GPURender();
+            }
+            
         }
 
         public Texture GPURender()
@@ -69,12 +82,19 @@
             ComputeBuffer sphereBuffer = new ComputeBuffer(this.scene.spheres.Count, 13 * 4);
             sphereBuffer.SetData(this.scene.spheres);
             cs.SetBuffer(kernelHandle, "spheres", sphereBuffer);
+            this.SphericalFib(ref this.sphereicalFibSamples);
+            ComputeBuffer sampleBuffer = new ComputeBuffer(this.sphereicalFibSamples.Length, 3 * 4);
+            sampleBuffer.SetData(this.sphereicalFibSamples);
+            cs.SetBuffer(kernelHandle, "_HemisphereSamples", sampleBuffer);
 
             cs.SetTexture(kernelHandle, "Texture", texture);
-            cs.Dispatch(kernelHandle, pixelResolutionX / 8, pixelResolutionY / 8, 1);
+            cs.Dispatch(kernelHandle, pixelResolutionX / 8, pixelResolutionY / 8, this.renderConfiguration.sampleRate / 8);
 
+            sampleBuffer.Dispose();
             screenPixelPositionBuffer.Dispose();
             sphereBuffer.Dispose();
+
+            texture.filterMode = FilterMode.Point;
 
             return texture;
         }
@@ -84,45 +104,98 @@
             int pixelResolutionX = (int)this.scene.camera.pixelResolution.x;
             int pixelResolutionY = (int)this.scene.camera.pixelResolution.y;
 
-            Texture2D texture = new Texture2D(pixelResolutionX, pixelResolutionY);
             int length = pixelResolutionX * pixelResolutionY;
 
-            PixelColorJob job = new PixelColorJob();
-            job.ambientLight = this.ambientLight;
-            job.colors = new NativeArray<Color>(pixelResolutionX * pixelResolutionY, Allocator.TempJob);
-            job.renderConfiguration = this.renderConfiguration;
-            job.cameraPosition = this.scene.camera.position;
-            job.spheres = new NativeArray<TDSphere>(this.scene.spheres.ToArray(), Allocator.TempJob);
-            job.screenPixelPositions = new NativeArray<float3>(this.GetScreenPixelPositions(), Allocator.TempJob);
-            job.worldHeightPerPixel = this.worldHeightPerPixel;
-            job.worldWidthPerPixel = this.worldWidthPerPixel;
-            job.upperBoundOne = this.upperBoundOne;
-            job.random.InitState((uint)System.DateTime.Now.Second);
-            JobHandle jobHandle = job.Schedule(length, 100);
+            //PixelColorJob job = new PixelColorJob();
+            //job.ambientLight = this.ambientLight;
+            //job.colors = new NativeArray<Color>(pixelResolutionX * pixelResolutionY, Allocator.TempJob);
+            //job.renderConfiguration = this.renderConfiguration;
+            //job.cameraPosition = this.scene.camera.position;
+            //job.spheres = new NativeArray<TDSphere>(this.scene.spheres.ToArray(), Allocator.TempJob);
+            //job.screenPixelPositions = new NativeArray<float3>(this.GetScreenPixelPositions(), Allocator.TempJob);
+            //job.worldHeightPerPixel = this.worldHeightPerPixel;
+            //job.worldWidthPerPixel = this.worldWidthPerPixel;
+            //job.upperBoundOne = this.upperBoundOne;
+            //job.random.InitState((uint)System.DateTime.Now.Second);
+            //JobHandle jobHandle = job.Schedule(length, 100);
 
-            jobHandle.Complete();
+            //jobHandle.Complete();
 
-            for (int i = 0; i < length; ++i)
+            //for (int i = 0; i < length; ++i)
+            //{
+            //    texture.SetPixel(i / pixelResolutionY, i % pixelResolutionY, job.colors[i]);
+            //}
+
+            //job.screenPixelPositions.Dispose();
+            //job.spheres.Dispose();
+            //job.colors.Dispose();
+
+            List<Thread> threads = new List<Thread>();
+            int batchSize = length / this.renderConfiguration.cpuThreads;
+            int batchStart = 0;
+
+            while(batchStart < length)
             {
-                texture.SetPixel(i / pixelResolutionY, i % pixelResolutionY, job.colors[i]);
+                Debug.Log(batchStart + " " + math.min(length, batchStart + batchSize));
+                int start = batchStart;
+                int end = math.min(length, batchStart + batchSize);
+                Thread thread = new Thread(() => this.PixelColoringThread(start, end));
+                thread.Start();
+                threads.Add(thread);
+                batchStart += batchSize;
             }
 
-            job.screenPixelPositions.Dispose();
-            job.spheres.Dispose();
-            job.colors.Dispose();
+            foreach(Thread thread in threads)
+            {
+                thread.Join();
+            }
 
-            texture.filterMode = FilterMode.Point;
-            texture.Apply();
+            for(int i = 0; i < length; ++i)
+            {
+                this.cpuTexture.SetPixel(i / pixelResolutionY, i % pixelResolutionY, new Color(accumulatedColor[i].x, accumulatedColor[i].y, accumulatedColor[i].z, 0.0f));
+            }
 
-            return texture;
+            this.cpuTexture.filterMode = FilterMode.Point;
+            this.cpuTexture.Apply();
+
+            return this.cpuTexture;
         }
+
+        private void PixelColoringThread(int start, int end)
+        {
+            Unity.Mathematics.Random random = new Unity.Mathematics.Random((uint)(100 + start * (System.DateTime.Now.Millisecond + 100)));
+            TDRay ray;
+            ray.origin = this.scene.camera.position;
+
+            for (int k = start; k < end; ++k)
+            {
+                float3 result = float3.zero;
+
+                for (int i = 0; i < this.renderConfiguration.sampleRate; ++i)
+                {
+                    float u = random.NextFloat() * this.worldWidthPerPixel;
+                    float v = random.NextFloat() * this.worldHeightPerPixel;
+
+                    ray.direction = math.normalize(this.screenPixelPositions[k] + new float3(u, v, 0) - this.scene.camera.position);
+
+                    result += this.TraceColor(ray, random);
+                }
+
+                accumulatedColor[k] = (accumulatedColor[k] * this.renderConfiguration.sampleRate * numIterations + result)
+                    / (this.renderConfiguration.sampleRate * (numIterations + 1));
+            }
+        }
+
 
         private void Start()
         {
             this.scene = TDLoader.LoadScene();
             int pixelResolutionX = (int)this.scene.camera.pixelResolution.x;
             int pixelResolutionY = (int)this.scene.camera.pixelResolution.y;
-
+            this.cpuTexture = new Texture2D(pixelResolutionX, pixelResolutionY);
+            this.screenPixelPositions = this.GetScreenPixelPositions();
+            this.accumulatedColor = new float3[pixelResolutionX * pixelResolutionY];
+            this.numIterations = 0;
             //Debug.Log(RandomPointInUnitSphere());
             System.Random m_rng = new System.Random();
             int kernelHandle = cs.FindKernel("CSMain");
@@ -131,10 +204,6 @@
             cs.SetFloat("_R0", (float)m_rng.NextDouble());
             cs.SetFloat("_R1", (float)m_rng.NextDouble());
             cs.SetFloat("_R2", (float)m_rng.NextDouble());
-            this.SphericalFib(ref this.sphereicalFibSamples);
-            ComputeBuffer sampleBuffer = new ComputeBuffer(this.sphereicalFibSamples.Length, 3 * 4);
-            sampleBuffer.SetData(this.sphereicalFibSamples);
-            cs.SetBuffer(kernelHandle, "_HemisphereSamples", sampleBuffer);
 
             System.Diagnostics.Stopwatch sw = new System.Diagnostics.Stopwatch();
             sw.Start();
@@ -151,15 +220,55 @@
 
         private IEnumerator RenderProgressive()
         {
-            while (true)
+            this.meshRenderer = this.renderPlane.GetComponent<MeshRenderer>();
+            this.renderPlane.transform.localScale = new Vector3(scene.camera.aspectRatio, 0.0f, 1.0f);
+            this.ambientLight = new float3(this.renderConfiguration.ambientLight.r, this.renderConfiguration.ambientLight.g, this.renderConfiguration.ambientLight.b) * this.renderConfiguration.ambientLightIntensity;
+
+            int pixelResolutionX = (int)this.scene.camera.pixelResolution.x;
+            int pixelResolutionY = (int)this.scene.camera.pixelResolution.y;
+
+            int length = pixelResolutionX * pixelResolutionY;
+            int batchSize = length / this.renderConfiguration.cpuThreads;
+
+            for (int i = 0; i < 1; ++i)
             {
-                System.Diagnostics.Stopwatch sw = new System.Diagnostics.Stopwatch();
-                sw.Start();
-                this.Render();
-                sw.Stop();
-                Debug.Log(sw.Elapsed);
-                yield return new WaitForSeconds(1.0f);
+                List<Thread> threads = new List<Thread>();
+                int batchStart = 0;
+
+                while (batchStart < length)
+                {
+                    int start = batchStart;
+                    int end = math.min(length, batchStart + batchSize);
+                    Thread thread = new Thread(() => this.PixelColoringThread(start, end));
+                    threads.Add(thread);
+                    batchStart = end;
+                }
+
+                foreach (Thread thread in threads)
+                {
+                    thread.Start();
+                }
+
+                foreach (Thread thread in threads)
+                {
+                    thread.Join();
+                }
+
+                numIterations += 1;
+
+                for (int j = 0; j < length; ++j)
+                {
+                    this.cpuTexture.SetPixel(j / pixelResolutionY, j % pixelResolutionY, new Color(accumulatedColor[j].x, accumulatedColor[j].y, accumulatedColor[j].z, 0.0f));
+                }
+
+                this.cpuTexture.filterMode = FilterMode.Point;
+                this.cpuTexture.Apply();
+                this.meshRenderer.material.mainTexture = this.cpuTexture;
+                System.IO.File.WriteAllBytes(this.numIterations + ".jpg", this.cpuTexture.EncodeToJPG());
+
+                yield return null;
             }
+
         }
 
         void SphericalFib(ref float3[] output)
@@ -225,7 +334,7 @@
             return pixelPositions;
         }
 
-        private float3 TraceColor(TDRay ray)
+        private float3 TraceColor(TDRay ray, Unity.Mathematics.Random random)
         {
             TDRayHitRecord hitRecord = new TDRayHitRecord();
             float3[] emissions = new float3[this.renderConfiguration.maxBounces];
@@ -247,7 +356,7 @@
                     if (hitRecord.material == 1.0f)
                     {
                         //Lambertian
-                        float3 target = hitRecord.point + hitRecord.normal + this.RandomPointInUnitSphere();
+                        float3 target = hitRecord.point + hitRecord.normal + this.RandomPointInUnitSphere(random);
                         scatteredRayDirection = target - hitRecord.point;
                         attenuation = hitRecord.albedo;
                         scatter = true;
@@ -256,7 +365,7 @@
                     {
                         //Metal
                         scatteredRayDirection = ray.direction - 2.0f * math.dot(ray.direction, hitRecord.normal) * hitRecord.normal
-                                            + hitRecord.fuzz * this.RandomPointInUnitSphere() * hitRecord.fuzz;
+                                            + hitRecord.fuzz * this.RandomPointInUnitSphere(random) * hitRecord.fuzz;
                         attenuation = hitRecord.albedo;
 
                         if (math.dot(scatteredRayDirection, hitRecord.normal) > 0.0f)
@@ -303,7 +412,7 @@
                             reflectProbablity = r0 + (1 - r0) * math.pow((1.0f - cosine), 5.0f);
                         }
 
-                        if (UnityEngine.Random.Range(0.0f, upperBoundOne) < reflectProbablity)
+                        if (random.NextFloat() < reflectProbablity)
                         {
                             scatteredRayDirection = reflectedDirection;
                         }
@@ -414,14 +523,14 @@
             return hasHit;
         }
 
-        private float3 RandomPointInUnitSphere()
+        private float3 RandomPointInUnitSphere(Unity.Mathematics.Random random)
         {
             float3 p;
             do
             {
-                p = 2.0f * new float3(UnityEngine.Random.Range(0.0f, this.upperBoundOne),
-                    UnityEngine.Random.Range(0.0f, this.upperBoundOne),
-                    UnityEngine.Random.Range(0.0f, this.upperBoundOne))
+                p = 2.0f * new float3(random.NextFloat(),
+                    random.NextFloat(),
+                    random.NextFloat())
                     - new float3(1.0f, 1.0f, 1.0f);
             } while (math.lengthsq(p) >= 1.0f);
             return p;
