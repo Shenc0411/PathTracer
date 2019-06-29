@@ -13,6 +13,8 @@
         public TDScene scene;
         public TDRenderConfiguration renderConfiguration;
         public GameObject renderPlane;
+        public ComputeShader cs;
+
         private MeshRenderer meshRenderer;
 
         private List<TDRay> rays;
@@ -21,6 +23,7 @@
         private float worldWidthPerPixel;
         private NativeArray<Color> colors;
         private readonly float upperBoundOne = 1.0f - float.Epsilon;
+        private float3[] sphereicalFibSamples = new float3[4096];
 
         public void Render()
         {
@@ -29,6 +32,51 @@
             this.ambientLight = new float3(this.renderConfiguration.ambientLight.r, this.renderConfiguration.ambientLight.g, this.renderConfiguration.ambientLight.b) * this.renderConfiguration.ambientLightIntensity;
 
             this.meshRenderer.material.mainTexture = CPURender();
+        }
+
+        public Texture GPURender()
+        {
+            TDCamera camera = this.scene.camera;
+
+            float worldNearPlaneHeight = camera.nearPlaneDistance * math.tan(camera.verticalFOV * Mathf.Deg2Rad * 0.5f) * 2.0f;
+            float worldNearPlaneWidth = camera.aspectRatio * worldNearPlaneHeight;
+
+            worldHeightPerPixel = worldNearPlaneHeight / camera.pixelResolution.y;
+            worldWidthPerPixel = worldNearPlaneWidth / camera.pixelResolution.x;
+
+            int pixelResolutionX = (int)this.scene.camera.pixelResolution.x;
+            int pixelResolutionY = (int)this.scene.camera.pixelResolution.y;
+            RenderTexture texture = new RenderTexture(pixelResolutionX, pixelResolutionY, 24);
+            texture.enableRandomWrite = true;
+            texture.Create();
+
+            int kernelHandle = cs.FindKernel("CSMain");
+
+            cs.SetInt("numSpheres", this.scene.spheres.Count);
+            cs.SetInt("pixelResolutionX", pixelResolutionX);
+            cs.SetInt("pixelResolutionY", pixelResolutionY);
+            cs.SetInt("sampleRate", this.renderConfiguration.sampleRate);
+            cs.SetFloat("widthPerPixel", worldWidthPerPixel);
+            cs.SetFloat("heightPerPixel", worldHeightPerPixel);
+            cs.SetVector("cameraPosition", new Vector3(this.scene.camera.position.x, this.scene.camera.position.y, this.scene.camera.position.z));
+            cs.SetVector("ambientLight", new Vector3(this.ambientLight.x, this.ambientLight.y, this.ambientLight.z));
+
+            float t = Time.time;
+            cs.SetVector("_Time", new Vector4(t / 20, t, t * 2, t * 3));
+            ComputeBuffer screenPixelPositionBuffer = new ComputeBuffer(pixelResolutionX * pixelResolutionY, 3 * 4);
+            screenPixelPositionBuffer.SetData(this.GetScreenPixelPositions());
+            cs.SetBuffer(kernelHandle, "screenPixelPositions", screenPixelPositionBuffer);
+            ComputeBuffer sphereBuffer = new ComputeBuffer(this.scene.spheres.Count, 13 * 4);
+            sphereBuffer.SetData(this.scene.spheres);
+            cs.SetBuffer(kernelHandle, "spheres", sphereBuffer);
+
+            cs.SetTexture(kernelHandle, "Texture", texture);
+            cs.Dispatch(kernelHandle, pixelResolutionX / 8, pixelResolutionY / 8, 1);
+
+            screenPixelPositionBuffer.Dispose();
+            sphereBuffer.Dispose();
+
+            return texture;
         }
 
         public Texture CPURender()
@@ -41,11 +89,11 @@
 
             PixelColorJob job = new PixelColorJob();
             job.ambientLight = this.ambientLight;
-            job.colors = colors;
+            job.colors = new NativeArray<Color>(pixelResolutionX * pixelResolutionY, Allocator.TempJob);
             job.renderConfiguration = this.renderConfiguration;
             job.cameraPosition = this.scene.camera.position;
             job.spheres = new NativeArray<TDSphere>(this.scene.spheres.ToArray(), Allocator.TempJob);
-            job.screenPixelPositions = this.GetScreenPixelPositions();
+            job.screenPixelPositions = new NativeArray<float3>(this.GetScreenPixelPositions(), Allocator.TempJob);
             job.worldHeightPerPixel = this.worldHeightPerPixel;
             job.worldWidthPerPixel = this.worldWidthPerPixel;
             job.upperBoundOne = this.upperBoundOne;
@@ -54,13 +102,14 @@
 
             jobHandle.Complete();
 
-            for(int i = 0; i < length; ++i)
+            for (int i = 0; i < length; ++i)
             {
                 texture.SetPixel(i / pixelResolutionY, i % pixelResolutionY, job.colors[i]);
             }
 
             job.screenPixelPositions.Dispose();
             job.spheres.Dispose();
+            job.colors.Dispose();
 
             texture.filterMode = FilterMode.Point;
             texture.Apply();
@@ -74,19 +123,30 @@
             int pixelResolutionX = (int)this.scene.camera.pixelResolution.x;
             int pixelResolutionY = (int)this.scene.camera.pixelResolution.y;
 
-            this.colors = new NativeArray<Color>(pixelResolutionX * pixelResolutionY, Allocator.Persistent);
-
             //Debug.Log(RandomPointInUnitSphere());
+            System.Random m_rng = new System.Random();
+            int kernelHandle = cs.FindKernel("CSMain");
 
+            cs.SetFloat("_Seed01", (float)m_rng.NextDouble());
+            cs.SetFloat("_R0", (float)m_rng.NextDouble());
+            cs.SetFloat("_R1", (float)m_rng.NextDouble());
+            cs.SetFloat("_R2", (float)m_rng.NextDouble());
+            this.SphericalFib(ref this.sphereicalFibSamples);
+            ComputeBuffer sampleBuffer = new ComputeBuffer(this.sphereicalFibSamples.Length, 3 * 4);
+            sampleBuffer.SetData(this.sphereicalFibSamples);
+            cs.SetBuffer(kernelHandle, "_HemisphereSamples", sampleBuffer);
 
-            //this.Render();
-
-            this.StartCoroutine(RenderProgressive());
+            System.Diagnostics.Stopwatch sw = new System.Diagnostics.Stopwatch();
+            sw.Start();
+            this.Render();
+            sw.Stop();
+            Debug.Log(sw.Elapsed);
+            //this.StartCoroutine(RenderProgressive());
         }
 
         private void OnDestroy()
         {
-            this.colors.Dispose();
+            //this.colors.Dispose();
         }
 
         private IEnumerator RenderProgressive()
@@ -102,7 +162,43 @@
             }
         }
 
-        private NativeArray<float3> GetScreenPixelPositions()
+        void SphericalFib(ref float3[] output)
+        {
+            double n = output.Length / 2;
+            double pi = Mathf.PI;
+            double dphi = pi * (3 - math.sqrt(5));
+            double phi = 0;
+            double dz = 1 / n;
+            double z = 1 - dz / 2.0f;
+            int[] indices = new int[output.Length];
+
+            for (int j = 0; j < n; j++)
+            {
+                double zj = z;
+                double thetaj = math.acos(zj);
+                double phij = phi % (2 * pi);
+                z = z - dz;
+                phi = phi + dphi;
+
+                // spherical -> cartesian, with r = 1
+                output[j] = new float3((float)(math.cos(phij) * math.sin(thetaj)),
+                                        (float)(zj),
+                                        (float)(math.sin(thetaj) * math.sin(phij)));
+                indices[j] = j;
+            }
+
+
+            // The code above only covers a hemisphere, this mirrors it into a sphere.
+            for (int i = 0; i < n; i++)
+            {
+                var vz = output[i];
+                vz.y *= -1;
+                output[output.Length - i - 1] = vz;
+                indices[i + output.Length / 2] = i + output.Length / 2;
+            }
+        }
+
+        private float3[] GetScreenPixelPositions()
         {
             TDCamera camera = this.scene.camera;
 
@@ -114,7 +210,7 @@
 
             float3 worldLowerLeftCorner = camera.position + camera.forward * camera.nearPlaneDistance - camera.right * 0.5f * worldNearPlaneWidth - camera.up * 0.5f * worldNearPlaneHeight;
 
-            NativeArray<float3> pixelPositions = new NativeArray<float3>((int)camera.pixelResolution.x * (int)camera.pixelResolution.y, Allocator.TempJob);
+            float3[] pixelPositions = new float3[(int)camera.pixelResolution.x * (int)camera.pixelResolution.y];
 
             for (int i = 0; i < camera.pixelResolution.x; ++i)
             {
