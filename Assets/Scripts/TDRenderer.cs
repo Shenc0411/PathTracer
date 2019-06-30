@@ -28,7 +28,11 @@
         private float3[] screenPixelPositions;
         private float3[] accumulatedColor;
         private Texture2D cpuTexture;
+        private RenderTexture gpuTexture;
         private int numIterations;
+        private int kernelHandle;
+        private int pixelResolutionX;
+        private int pixelResolutionY;
 
         public void Render()
         {
@@ -47,7 +51,7 @@
             
         }
 
-        public Texture GPURender()
+        private void GPUPrepare()
         {
             TDCamera camera = this.scene.camera;
 
@@ -57,14 +61,17 @@
             worldHeightPerPixel = worldNearPlaneHeight / camera.pixelResolution.y;
             worldWidthPerPixel = worldNearPlaneWidth / camera.pixelResolution.x;
 
-            int pixelResolutionX = (int)this.scene.camera.pixelResolution.x;
-            int pixelResolutionY = (int)this.scene.camera.pixelResolution.y;
-            RenderTexture texture = new RenderTexture(pixelResolutionX, pixelResolutionY, 24);
-            texture.enableRandomWrite = true;
-            texture.Create();
+            pixelResolutionX = (int)this.scene.camera.pixelResolution.x;
+            pixelResolutionY = (int)this.scene.camera.pixelResolution.y;
 
-            int kernelHandle = cs.FindKernel("CSMain");
+            kernelHandle = cs.FindKernel("CSMain");
 
+            gpuTexture = new RenderTexture(pixelResolutionX, pixelResolutionY, 24);
+            gpuTexture.enableRandomWrite = true;
+            gpuTexture.Create();
+            gpuTexture.filterMode = FilterMode.Point;
+
+            cs.SetInt("numIterations", numIterations);
             cs.SetInt("numSpheres", this.scene.spheres.Count);
             cs.SetInt("pixelResolutionX", pixelResolutionX);
             cs.SetInt("pixelResolutionY", pixelResolutionY);
@@ -74,29 +81,28 @@
             cs.SetVector("cameraPosition", new Vector3(this.scene.camera.position.x, this.scene.camera.position.y, this.scene.camera.position.z));
             cs.SetVector("ambientLight", new Vector3(this.ambientLight.x, this.ambientLight.y, this.ambientLight.z));
 
-            float t = Time.time;
-            cs.SetVector("_Time", new Vector4(t / 20, t, t * 2, t * 3));
             ComputeBuffer screenPixelPositionBuffer = new ComputeBuffer(pixelResolutionX * pixelResolutionY, 3 * 4);
             screenPixelPositionBuffer.SetData(this.GetScreenPixelPositions());
             cs.SetBuffer(kernelHandle, "screenPixelPositions", screenPixelPositionBuffer);
             ComputeBuffer sphereBuffer = new ComputeBuffer(this.scene.spheres.Count, 13 * 4);
             sphereBuffer.SetData(this.scene.spheres);
             cs.SetBuffer(kernelHandle, "spheres", sphereBuffer);
-            this.SphericalFib(ref this.sphereicalFibSamples);
-            ComputeBuffer sampleBuffer = new ComputeBuffer(this.sphereicalFibSamples.Length, 3 * 4);
-            sampleBuffer.SetData(this.sphereicalFibSamples);
-            cs.SetBuffer(kernelHandle, "_HemisphereSamples", sampleBuffer);
+            //this.SphericalFib(ref this.sphereicalFibSamples);
 
-            cs.SetTexture(kernelHandle, "Texture", texture);
-            cs.Dispatch(kernelHandle, pixelResolutionX / 8, pixelResolutionY / 8, this.renderConfiguration.sampleRate / 8);
+            cs.SetTexture(kernelHandle, "Texture", gpuTexture);
 
-            sampleBuffer.Dispose();
-            screenPixelPositionBuffer.Dispose();
-            sphereBuffer.Dispose();
+        }
 
-            texture.filterMode = FilterMode.Point;
+        public Texture GPURender()
+        {
+            Unity.Mathematics.Random random = new Unity.Mathematics.Random((uint)(System.DateTime.Now.Millisecond * System.DateTime.Now.Second) + 1);
+            cs.SetVector("seed", new Vector3(random.NextFloat(0.0f, pixelResolutionX), random.NextFloat(0.0f, pixelResolutionY), random.NextFloat(0.0f, 1000.0f)));
 
-            return texture;
+            cs.Dispatch(kernelHandle, pixelResolutionX / 8, pixelResolutionY / 8, 1);
+
+            numIterations += 1;
+            cs.SetInt("numIterations", numIterations);
+            return gpuTexture;
         }
 
         public Texture CPURender()
@@ -200,17 +206,16 @@
             System.Random m_rng = new System.Random();
             int kernelHandle = cs.FindKernel("CSMain");
 
-            cs.SetFloat("_Seed01", (float)m_rng.NextDouble());
-            cs.SetFloat("_R0", (float)m_rng.NextDouble());
-            cs.SetFloat("_R1", (float)m_rng.NextDouble());
-            cs.SetFloat("_R2", (float)m_rng.NextDouble());
+            numIterations = 0;
+            
 
             System.Diagnostics.Stopwatch sw = new System.Diagnostics.Stopwatch();
             sw.Start();
-            this.Render();
+            this.GPUPrepare();
             sw.Stop();
             Debug.Log(sw.Elapsed);
-            //this.StartCoroutine(RenderProgressive());
+
+            this.StartCoroutine(RenderProgressive());
         }
 
         private void OnDestroy()
@@ -219,6 +224,15 @@
         }
 
         private IEnumerator RenderProgressive()
+        {
+            while(true)
+            {
+                this.Render();
+                yield return new WaitForSeconds(0.05f);
+            }
+        }
+
+        private IEnumerator RenderProgressiveCPU()
         {
             this.meshRenderer = this.renderPlane.GetComponent<MeshRenderer>();
             this.renderPlane.transform.localScale = new Vector3(scene.camera.aspectRatio, 0.0f, 1.0f);

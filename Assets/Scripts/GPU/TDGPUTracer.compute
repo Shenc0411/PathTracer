@@ -1,6 +1,8 @@
 ﻿// Each #kernel tells which function to compile; you can have many kernels
 #pragma kernel CSMain
 
+#include "Random.cginc"
+
 struct Ray 
 {
 	float3 origin;
@@ -30,22 +32,18 @@ struct Sphere
 	float refractiveIndex;
 };
 
-// Create a RenderTexture with enableRandomWrite flag and set it
-// with cs.SetTexture
+#define numRandomNumbers 1024
+
 RWTexture2D<float4> Texture;
-StructuredBuffer<float3> _HemisphereSamples;
 StructuredBuffer<float3> screenPixelPositions;
 StructuredBuffer<Sphere> spheres;
+
 float3 cameraPosition;
 float3 ambientLight;
 float widthPerPixel;
 float heightPerPixel;
 
-float4 _Time;
-float _Seed01;
-float _R0;
-float _R1;
-float _R2;
+float3 seed;
 
 int pixelResolutionX;
 int pixelResolutionY;
@@ -53,33 +51,34 @@ int numIterations;
 int sampleRate;
 int numSpheres;
 
-float GradNoise(float2 xy)
+uint wang_hash(uint seed)
 {
-	return frac(52.9829189f * frac(0.06711056f*float(xy.x) + 0.00583715f*float(xy.y)));
+	seed = (seed ^ 61) ^ (seed >> 16);
+	seed *= 9;
+	seed = seed ^ (seed >> 4);
+	seed *= 0x27d4eb2d;
+	seed = seed ^ (seed >> 15);
+	return seed;
 }
 
-float Noise(float2 uv)
+float Noise(inout uint state)
 {
-	return GradNoise(floor(fmod(uv, 1024)) + _Seed01 * _Time.y);
+	state = wang_hash(state);
+
+	return state * (1.0 / 4294967296.0);
 }
 
-float3 RandomPointInUnitSphere(float2 uv)
+float3 RandomPointInUnitSphere(inout uint state)
 {
 	float3 p;
-	// Should be a loop until a point on unit sphere is found.
-	// Then normalize wouldn't be needed.
-	p = 2.0 * normalize(float3(Noise(uv * 2000.0f * (1.0f + _R0)) * 2.0f - 0.5f,
-		Noise(uv * 2000.0f * (1.0f + _R1)) * 2 - 0.5f,
-		Noise(uv * 2000.0f * (1.0f + _R2)) * 2 - 0.5f)) - float3(1.0f, 1.0f, 1.0f);
-
-	p = 2.0 * normalize(float3(_R0, _R1, _R2)) - float3(1.0f, 1.0f, 1.0f);
-	p = _HemisphereSamples[(Noise(uv * 2000.0f) * 392901) % 4096];
-
+	do
+	{
+		p = 2.0f * float3(Noise(state),
+			Noise(state),
+			Noise(state))
+			- float3(1.0f, 1.0f, 1.0f);
+	} while (dot(p, p) >= 1.0f);
 	return p;
-}
-
-float3 RandomInUnitDisk(float2 uv) {
-	return RandomPointInUnitSphere(uv);
 }
 
 bool RaySphereCollision(Ray ray, out HitRecord hitRecord)
@@ -145,7 +144,9 @@ bool RaySphereCollision(Ray ray, out HitRecord hitRecord)
 	return hasHit;
 }
 
-[numthreads(8,8,8)]
+#define _MaxDepth 5
+
+[numthreads(8,8,1)]
 void CSMain (uint3 id : SV_DispatchThreadID)
 {
 	Ray ray;
@@ -154,152 +155,149 @@ void CSMain (uint3 id : SV_DispatchThreadID)
 	float3 emissions[5];
 	float3 attenuations[5];
 	float3 result = ambientLight;
+	float3 color = float3(0.0, 0.0, 0.0);
 	int depth = 5 - 1;
+	int index = id.x * pixelResolutionY + id.y;
+	uint state = floor(dot(seed, id));
 
-	int z = id.z;
-	z ^= (z << 13);
-	z ^= (z >> 17);
-	z ^= (z << 5);
+	/*Texture[id.xy] = float4(RandomPointInUnitSphere(state), 0.0f);
 
-	float2 uv = float2(id.x + Noise(_R0 * z), id.y + Noise(_R0 * z));
-	float3 offset = float3(widthPerPixel * Noise(_R0 * z), heightPerPixel * Noise(_R0 * z), 0);
-	ray.direction = normalize(screenPixelPositions[id.x * pixelResolutionY + id.y] + offset - cameraPosition);
+	return;*/
 
-	result = ambientLight;
-	depth = 5 - 1;
-
-	for (int i = 0; i < 5; ++i)
+	for(int s = 0; s < sampleRate; ++s)
 	{
-		int u = i;
-		int v = i;
-		u ^= (u << 13);
-		u ^= (u >> 17);
-		u ^= (u << 5);
 
-		v ^= (v << 13);
-		v ^= (v >> 17);
-		v ^= (v << 5);
+		float u = Noise(state);
+		float v = Noise(state);
+		float2 uv = float2(id.x + u, id.y + v);
+		float3 offset = float3(widthPerPixel * u, heightPerPixel * v, 0);
+		ray.direction = normalize(screenPixelPositions[index] + offset - cameraPosition);
 
-		float2 uvShift = float2(u , v);
+		result = ambientLight;
+		depth = _MaxDepth - 1;
 
-		attenuations[i] = ambientLight;
-
-		if (RaySphereCollision(ray, hitRecord))
+		for (int i = 0; i < _MaxDepth; ++i)
 		{
+			attenuations[i] = ambientLight;
 
-			float3 attenuation;
-			float3 scatteredRayDirection;
-			bool scatter = false;
-
-			if (hitRecord.material == 1.0f)
+			if (RaySphereCollision(ray, hitRecord))
 			{
-				//Lambertian
-				float3 target = hitRecord.hitPoint + hitRecord.normal + RandomPointInUnitSphere(uv + uvShift);
-				scatteredRayDirection = target - hitRecord.hitPoint;
-				attenuation = hitRecord.albedo;
-				scatter = true;
-			}
-			else if (hitRecord.material == 2.0f)
-			{
-				//Metal
-				scatteredRayDirection = ray.direction - 2.0f * dot(ray.direction, hitRecord.normal) * hitRecord.normal
-					+ hitRecord.fuzz * RandomPointInUnitSphere(uv + uvShift) * hitRecord.fuzz;
-				attenuation = hitRecord.albedo;
 
-				if (dot(scatteredRayDirection, hitRecord.normal) > 0.0f)
+				float3 attenuation;
+				float3 scatteredRayDirection;
+				bool scatter = false;
+
+				if (hitRecord.material == 1.0f)
 				{
+					//Lambertian
+					float3 target = hitRecord.hitPoint + hitRecord.normal + RandomPointInUnitSphere(state);
+					scatteredRayDirection = target - hitRecord.hitPoint;
+					attenuation = hitRecord.albedo;
+					scatter = true;
+				}
+				else if (hitRecord.material == 2.0f)
+				{
+					//Metal
+					scatteredRayDirection = ray.direction - 2.0f * dot(ray.direction, hitRecord.normal) * hitRecord.normal
+						+ hitRecord.fuzz * RandomPointInUnitSphere(state) * hitRecord.fuzz;
+					attenuation = hitRecord.albedo;
+
+					if (dot(scatteredRayDirection, hitRecord.normal) > 0.0f)
+					{
+						scatter = true;
+					}
+
+				}
+				else if (hitRecord.material == 3.0f)
+				{
+					//Refractive
+					float3 reflectedDirection = ray.direction - 2.0f * dot(ray.direction, hitRecord.normal) * hitRecord.normal;
+					float3 outwardNormal;
+					float3 refractedDirection;
+					float reflectProbablity = 1.0f;
+					float cosine = 0.0f;
+					float niOverNt = 0.0f;
+					attenuation = float3(1.0f, 1.0f, 1.0f);
+
+					if (dot(ray.direction, hitRecord.normal) > 0.0f)
+					{
+						outwardNormal = -hitRecord.normal;
+						niOverNt = hitRecord.refractiveIndex;
+						cosine = hitRecord.refractiveIndex * dot(ray.direction, hitRecord.normal) / length(ray.direction);
+					}
+					else
+					{
+						outwardNormal = hitRecord.normal;
+						niOverNt = 1.0f / hitRecord.refractiveIndex;
+						cosine = -dot(ray.direction, hitRecord.normal) / length(ray.direction);
+					}
+
+					float dt = dot(ray.direction, hitRecord.normal);
+					float discriminant = 1.0f - niOverNt * niOverNt * (1.0f - dt * dt);
+
+
+					if (discriminant > 0.0f)
+					{
+						//Refract
+						refractedDirection = niOverNt * (ray.direction - outwardNormal * dt) - outwardNormal * sqrt(discriminant);
+						//Schlick Approximation
+						float r0 = (1.0f - hitRecord.refractiveIndex) / (1.0f + hitRecord.refractiveIndex);
+						r0 = r0 * r0;
+						reflectProbablity = r0 + (1 - r0) * pow((1.0f - cosine), 5.0f);
+					}
+
+					if (Noise(state) < reflectProbablity)
+					{
+						scatteredRayDirection = reflectedDirection;
+					}
+					else
+					{
+						scatteredRayDirection = refractedDirection;
+					}
+
 					scatter = true;
 				}
 
-			}
-			else if (hitRecord.material == 3.0f)
-			{
-				//Refractive
-				float3 reflectedDirection = ray.direction - 2.0f * dot(ray.direction, hitRecord.normal) * hitRecord.normal;
-				float3 outwardNormal;
-				float3 refractedDirection;
-				float reflectProbablity = 1.0f;
-				float cosine = 0.0f;
-				float niOverNt = 0.0f;
-				attenuation = float3(1.0f, 1.0f, 1.0f);
-
-				if (dot(ray.direction, hitRecord.normal) > 0.0f)
+				if (scatter)
 				{
-					outwardNormal = -hitRecord.normal;
-					niOverNt = hitRecord.refractiveIndex;
-					cosine = hitRecord.refractiveIndex * dot(ray.direction, hitRecord.normal) / length(ray.direction);
+					//TDRay scatteredRay = new TDRay(hitRecord.point, scatteredRayDirection, ray.uv);
+
+					ray.origin = hitRecord.hitPoint;
+					ray.direction = normalize(scatteredRayDirection);
+
+					emissions[i] = hitRecord.emission;
+					attenuations[i] = attenuation;
+
+					//return hitRecord.emission + attenuation * TraceColor(scatteredRay, numBounces + 1);
 				}
 				else
 				{
-					outwardNormal = hitRecord.normal;
-					niOverNt = 1.0f / hitRecord.refractiveIndex;
-					cosine = -dot(ray.direction, hitRecord.normal) / length(ray.direction);
+					depth = i;
+					break;
 				}
 
-				float dt = dot(ray.direction, hitRecord.normal);
-				float discriminant = 1.0f - niOverNt * niOverNt * (1.0f - dt * dt);
-
-
-				if (discriminant > 0.0f)
-				{
-					//Refract
-					refractedDirection = niOverNt * (ray.direction - outwardNormal * dt) - outwardNormal * sqrt(discriminant);
-					//Schlick Approximation
-					float r0 = (1.0f - hitRecord.refractiveIndex) / (1.0f + hitRecord.refractiveIndex);
-					r0 = r0 * r0;
-					reflectProbablity = r0 + (1 - r0) * pow((1.0f - cosine), 5.0f);
-				}
-
-				if (Noise(uv + uvShift) < reflectProbablity)
-				{
-					scatteredRayDirection = reflectedDirection;
-				}
-				else
-				{
-					scatteredRayDirection = refractedDirection;
-				}
-
-				scatter = true;
-			}
-
-			if (scatter)
-			{
-				//TDRay scatteredRay = new TDRay(hitRecord.point, scatteredRayDirection, ray.uv);
-
-				ray.origin = hitRecord.hitPoint;
-				ray.direction = normalize(scatteredRayDirection);
-
-				emissions[i] = hitRecord.emission;
-				attenuations[i] = attenuation;
-
-				//return hitRecord.emission + attenuation * TraceColor(scatteredRay, numBounces + 1);
+				//return float3.zero;
 			}
 			else
 			{
 				depth = i;
 				break;
 			}
-
-			//return float3.zero;
+			//return this.ambientLight;
 		}
-		else
+
+		for (int j = depth; j >= 0; --j)
 		{
-			depth = i;
-			break;
+			result = emissions[j] + result * attenuations[j];
 		}
-		//return this.ambientLight;
+
+		color += result;
 	}
 
-	for (int j = depth; j >= 0; --j)
-	{
-		result = emissions[j] + result * attenuations[j];
-	}
+	color /= sampleRate;
 
 	//return result;
-	/*Texture[id.xy] = float4((Texture[id.xy].x * numIterations * sampleRate + result.x) / ((numIterations + 1) * sampleRate),
-						(Texture[id.xy].y * numIterations * sampleRate + result.y) / ((numIterations + 1) * sampleRate),
-						(Texture[id.xy].z * numIterations * sampleRate + result.z) / ((numIterations + 1) * sampleRate), 0.0f);*/
-	Texture[id.xy] += float4(result / sampleRate, 0.0f);
+	Texture[id.xy] = float4((Texture[id.xy].xyz * numIterations + color) / (numIterations + 1), 0.0f);
 }
 
 
