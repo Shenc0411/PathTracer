@@ -32,11 +32,12 @@ struct Sphere
 	float refractiveIndex;
 };
 
-#define numRandomNumbers 1024
+#define numSamples 32768
 
 RWTexture2D<float4> Texture;
 StructuredBuffer<float3> screenPixelPositions;
 StructuredBuffer<Sphere> spheres;
+StructuredBuffer<float3> sphericalSamples;
 
 float3 cameraPosition;
 float3 ambientLight;
@@ -61,6 +62,13 @@ uint wang_hash(uint seed)
 	return seed;
 }
 
+uint RandomInt(inout uint state) 
+{
+	state = wang_hash(state);
+
+	return state;
+}
+
 float Noise(inout uint state)
 {
 	state = wang_hash(state);
@@ -70,7 +78,7 @@ float Noise(inout uint state)
 
 float3 RandomPointInUnitSphere(inout uint state)
 {
-	float3 p;
+	/*float3 p;
 	do
 	{
 		p = 2.0f * float3(Noise(state),
@@ -78,7 +86,9 @@ float3 RandomPointInUnitSphere(inout uint state)
 			Noise(state))
 			- float3(1.0f, 1.0f, 1.0f);
 	} while (dot(p, p) >= 1.0f);
-	return p;
+	return p;*/
+	//return normalize(float3(Noise(state), Noise(state), Noise(state)));
+	return sphericalSamples[RandomInt(state) % numSamples];
 }
 
 bool RaySphereCollision(Ray ray, out HitRecord hitRecord)
@@ -156,13 +166,9 @@ void CSMain (uint3 id : SV_DispatchThreadID)
 	float3 attenuations[5];
 	float3 result = ambientLight;
 	float3 color = float3(0.0, 0.0, 0.0);
-	int depth = 5 - 1;
+	int depth = _MaxDepth - 1;
 	int index = id.x * pixelResolutionY + id.y;
-	uint state = floor(dot(seed, id));
-
-	/*Texture[id.xy] = float4(RandomPointInUnitSphere(state), 0.0f);
-
-	return;*/
+	uint state = floor(dot(seed, id) * numIterations);
 
 	for(int s = 0; s < sampleRate; ++s)
 	{
@@ -296,7 +302,6 @@ void CSMain (uint3 id : SV_DispatchThreadID)
 
 	color /= sampleRate;
 
-	//return result;
 	Texture[id.xy] = float4((Texture[id.xy].xyz * numIterations + color) / (numIterations + 1), 0.0f);
 }
 

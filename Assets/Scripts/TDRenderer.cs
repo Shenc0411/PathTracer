@@ -24,7 +24,7 @@
         private float worldWidthPerPixel;
         private NativeArray<Color> colors;
         private readonly float upperBoundOne = 1.0f - float.Epsilon;
-        private float3[] sphereicalFibSamples = new float3[4096];
+        private float3[] sphereicalFibSamples = new float3[32768];
         private float3[] screenPixelPositions;
         private float3[] accumulatedColor;
         private Texture2D cpuTexture;
@@ -87,21 +87,24 @@
             ComputeBuffer sphereBuffer = new ComputeBuffer(this.scene.spheres.Count, 13 * 4);
             sphereBuffer.SetData(this.scene.spheres);
             cs.SetBuffer(kernelHandle, "spheres", sphereBuffer);
-            //this.SphericalFib(ref this.sphereicalFibSamples);
+            this.SphericalFib(ref this.sphereicalFibSamples);
+            ComputeBuffer sampleBuffer = new ComputeBuffer(32768, 3 * 4);
+            sampleBuffer.SetData(this.sphereicalFibSamples);
+            cs.SetBuffer(kernelHandle, "sphericalSamples", sampleBuffer);
 
             cs.SetTexture(kernelHandle, "Texture", gpuTexture);
-
         }
 
         public Texture GPURender()
         {
-            Unity.Mathematics.Random random = new Unity.Mathematics.Random((uint)(System.DateTime.Now.Millisecond * System.DateTime.Now.Second) + 1);
-            cs.SetVector("seed", new Vector3(random.NextFloat(0.0f, pixelResolutionX), random.NextFloat(0.0f, pixelResolutionY), random.NextFloat(0.0f, 1000.0f)));
+            Unity.Mathematics.Random random = new Unity.Mathematics.Random((uint)(System.DateTime.Now.Millisecond * 1000 + System.DateTime.Now.Second) + 1);
+            cs.SetVector("seed", new Vector3(random.NextFloat(0.0f, pixelResolutionX), random.NextFloat(0.0f, pixelResolutionY), random.NextFloat(0.0f, float.MaxValue)));
 
             cs.Dispatch(kernelHandle, pixelResolutionX / 8, pixelResolutionY / 8, 1);
 
             numIterations += 1;
             cs.SetInt("numIterations", numIterations);
+
             return gpuTexture;
         }
 
@@ -207,7 +210,6 @@
             int kernelHandle = cs.FindKernel("CSMain");
 
             numIterations = 0;
-            
 
             System.Diagnostics.Stopwatch sw = new System.Diagnostics.Stopwatch();
             sw.Start();
@@ -228,7 +230,11 @@
             while(true)
             {
                 this.Render();
-                yield return new WaitForSeconds(0.05f);
+                if(numIterations % 10 == 0)
+                {
+                    Debug.Log(numIterations);
+                }
+                yield return null;
             }
         }
 
