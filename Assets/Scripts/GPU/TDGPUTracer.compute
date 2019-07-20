@@ -38,11 +38,17 @@ RWTexture2D<float4> Texture;
 StructuredBuffer<float3> screenPixelPositions;
 StructuredBuffer<Sphere> spheres;
 StructuredBuffer<float3> sphericalSamples;
+StructuredBuffer<float> numericalSamples;
 
 float3 cameraPosition;
+float3 cameraRight;
+float3 cameraUp;
+float3 worldLowerLeftCorner;
+
 float3 ambientLight;
 float widthPerPixel;
 float heightPerPixel;
+float time;
 
 float3 seed;
 
@@ -71,14 +77,15 @@ uint RandomInt(inout uint state)
 
 float Noise(inout uint state)
 {
+	//return numericalSamples[RandomInt(state) % numSamples];
 	state = wang_hash(state);
 
-	return state * (1.0 / 4294967296.0);
+	return float(state) * (1.0 / 4294967296.0);
 }
 
 float3 RandomPointInUnitSphere(inout uint state)
 {
-	/*float3 p;
+	float3 p;
 	do
 	{
 		p = 2.0f * float3(Noise(state),
@@ -86,9 +93,9 @@ float3 RandomPointInUnitSphere(inout uint state)
 			Noise(state))
 			- float3(1.0f, 1.0f, 1.0f);
 	} while (dot(p, p) >= 1.0f);
-	return p;*/
+	return p;
 	//return normalize(float3(Noise(state), Noise(state), Noise(state)));
-	return sphericalSamples[RandomInt(state) % numSamples];
+	//return sphericalSamples[RandomInt(state) % numSamples];
 }
 
 bool RaySphereCollision(Ray ray, out HitRecord hitRecord)
@@ -159,6 +166,7 @@ bool RaySphereCollision(Ray ray, out HitRecord hitRecord)
 [numthreads(8,8,1)]
 void CSMain (uint3 id : SV_DispatchThreadID)
 {
+
 	Ray ray;
 	ray.origin = cameraPosition;
 	HitRecord hitRecord;
@@ -166,9 +174,11 @@ void CSMain (uint3 id : SV_DispatchThreadID)
 	float3 attenuations[5];
 	float3 result = ambientLight;
 	float3 color = float3(0.0, 0.0, 0.0);
+
 	int depth = _MaxDepth - 1;
 	int index = id.x * pixelResolutionY + id.y;
-	uint state = floor(dot(seed, id) * numIterations);
+	uint state = pow(id.x, 2) + pow(id.y, 2) + time;
+	float3 pixelPosition = screenPixelPositions[index];
 
 	for(int s = 0; s < sampleRate; ++s)
 	{
@@ -177,7 +187,7 @@ void CSMain (uint3 id : SV_DispatchThreadID)
 		float v = Noise(state);
 		float2 uv = float2(id.x + u, id.y + v);
 		float3 offset = float3(widthPerPixel * u, heightPerPixel * v, 0);
-		ray.direction = normalize(screenPixelPositions[index] + offset - cameraPosition);
+		ray.direction = normalize(pixelPosition + offset - cameraPosition);
 
 		result = ambientLight;
 		depth = _MaxDepth - 1;
@@ -304,5 +314,3 @@ void CSMain (uint3 id : SV_DispatchThreadID)
 
 	Texture[id.xy] = float4((Texture[id.xy].xyz * numIterations + color) / (numIterations + 1), 0.0f);
 }
-
-

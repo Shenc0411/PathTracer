@@ -9,6 +9,7 @@
     using TorchDragon.CPU;
     using System.Threading;
 
+
     public class TDRenderer : MonoBehaviour
     {
         public TDScene scene;
@@ -84,10 +85,12 @@
             ComputeBuffer screenPixelPositionBuffer = new ComputeBuffer(pixelResolutionX * pixelResolutionY, 3 * 4);
             screenPixelPositionBuffer.SetData(this.GetScreenPixelPositions());
             cs.SetBuffer(kernelHandle, "screenPixelPositions", screenPixelPositionBuffer);
+
             ComputeBuffer sphereBuffer = new ComputeBuffer(this.scene.spheres.Count, 13 * 4);
             sphereBuffer.SetData(this.scene.spheres);
             cs.SetBuffer(kernelHandle, "spheres", sphereBuffer);
             this.SphericalFib(ref this.sphereicalFibSamples);
+
             ComputeBuffer sampleBuffer = new ComputeBuffer(32768, 3 * 4);
             sampleBuffer.SetData(this.sphereicalFibSamples);
             cs.SetBuffer(kernelHandle, "sphericalSamples", sampleBuffer);
@@ -99,12 +102,22 @@
         {
             Unity.Mathematics.Random random = new Unity.Mathematics.Random((uint)(System.DateTime.Now.Millisecond * 1000 + System.DateTime.Now.Second) + 1);
             cs.SetVector("seed", new Vector3(random.NextFloat(0.0f, pixelResolutionX), random.NextFloat(0.0f, pixelResolutionY), random.NextFloat(0.0f, float.MaxValue)));
+            cs.SetFloat("time", System.DateTime.Now.Millisecond * 1000 + System.DateTime.Now.Second);
+            ComputeBuffer numericalSampleBuffer = new ComputeBuffer(32768, 4);
+
+            float[] numericalSamples = new float[32768];
+            for(int i = 0; i < 32768; ++i)
+            {
+                numericalSamples[i] = random.NextFloat();
+            }
+            numericalSampleBuffer.SetData(numericalSamples);
+            cs.SetBuffer(kernelHandle, "numericalSamples", numericalSampleBuffer);
 
             cs.Dispatch(kernelHandle, pixelResolutionX / 8, pixelResolutionY / 8, 1);
 
             numIterations += 1;
             cs.SetInt("numIterations", numIterations);
-
+            numericalSampleBuffer.Dispose();
             return gpuTexture;
         }
 
@@ -145,7 +158,6 @@
 
             while(batchStart < length)
             {
-                Debug.Log(batchStart + " " + math.min(length, batchStart + batchSize));
                 int start = batchStart;
                 int end = math.min(length, batchStart + batchSize);
                 Thread thread = new Thread(() => this.PixelColoringThread(start, end));
@@ -172,18 +184,22 @@
 
         private void PixelColoringThread(int start, int end)
         {
-            Unity.Mathematics.Random random = new Unity.Mathematics.Random((uint)(100 + start * (System.DateTime.Now.Millisecond + 100)));
+            uint seed = (uint)((start + 1) * (System.DateTime.Now.Millisecond * 1000 + System.DateTime.Now.Second + 1));
+            
+            Unity.Mathematics.Random random = new Unity.Mathematics.Random(seed);
             TDRay ray;
             ray.origin = this.scene.camera.position;
+            float3 result;
+            float u, v;
 
             for (int k = start; k < end; ++k)
             {
-                float3 result = float3.zero;
+                result = float3.zero;
 
                 for (int i = 0; i < this.renderConfiguration.sampleRate; ++i)
                 {
-                    float u = random.NextFloat() * this.worldWidthPerPixel;
-                    float v = random.NextFloat() * this.worldHeightPerPixel;
+                    u = random.NextFloat() * this.worldWidthPerPixel;
+                    v = random.NextFloat() * this.worldHeightPerPixel;
 
                     ray.direction = math.normalize(this.screenPixelPositions[k] + new float3(u, v, 0) - this.scene.camera.position);
 
@@ -214,9 +230,11 @@
             System.Diagnostics.Stopwatch sw = new System.Diagnostics.Stopwatch();
             sw.Start();
             this.GPUPrepare();
+            //this.Render();
             sw.Stop();
             Debug.Log(sw.Elapsed);
 
+            //this.StartCoroutine(RenderProgressiveCPU());
             this.StartCoroutine(RenderProgressive());
         }
 
@@ -250,7 +268,7 @@
             int length = pixelResolutionX * pixelResolutionY;
             int batchSize = length / this.renderConfiguration.cpuThreads;
 
-            for (int i = 0; i < 1; ++i)
+            for (int i = 0; i < 2500; ++i)
             {
                 List<Thread> threads = new List<Thread>();
                 int batchStart = 0;
@@ -277,7 +295,7 @@
                 numIterations += 1;
 
                 for (int j = 0; j < length; ++j)
-                {
+                { 
                     this.cpuTexture.SetPixel(j / pixelResolutionY, j % pixelResolutionY, new Color(accumulatedColor[j].x, accumulatedColor[j].y, accumulatedColor[j].z, 0.0f));
                 }
 
